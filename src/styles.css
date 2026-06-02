@@ -264,14 +264,23 @@ button:disabled {
   font-weight: 800;
 }
 
-.auth-error {
+.auth-error,
+.auth-notice {
   margin: 0;
   padding: 8px 10px;
   border-radius: 6px;
-  background: #fff0f0;
-  color: #9c1f1f;
   font-size: 12px;
   line-height: 17px;
+}
+
+.auth-error {
+  background: #fff0f0;
+  color: #9c1f1f;
+}
+
+.auth-notice {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .auth-switch {

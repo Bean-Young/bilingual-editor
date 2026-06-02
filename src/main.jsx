@@ -337,6 +337,7 @@ function App() {
   const [authMode, setAuthMode] = useState('signin');
   const [authForm, setAuthForm] = useState({ email: '', password: '', displayName: '' });
   const [authError, setAuthError] = useState('');
+  const [authNotice, setAuthNotice] = useState('');
   const [cloudDocs, setCloudDocs] = useState([]);
   const [selectedDocId, setSelectedDocId] = useState(null);
   const [cloudLoading, setCloudLoading] = useState(false);
@@ -510,6 +511,7 @@ function App() {
   async function handleAuthSubmit(event) {
     event.preventDefault();
     setAuthError('');
+    setAuthNotice('');
     const email = authForm.email.trim();
     const password = authForm.password;
     if (!email || !password) {
@@ -530,7 +532,9 @@ function App() {
       return;
     }
 
-    setCloudStatus(authMode === 'signup' && !result.data.session ? '已发送验证邮件' : '登录成功');
+    const nextMessage = authMode === 'signup' && !result.data.session ? '已发送验证邮件，请先完成邮箱验证。' : '登录成功';
+    setCloudStatus(nextMessage);
+    setAuthNotice(nextMessage);
   }
 
   async function signOut() {
@@ -928,6 +932,7 @@ function App() {
         mode={authMode}
         form={authForm}
         error={authError}
+        notice={authNotice}
         onModeChange={setAuthMode}
         onFormChange={setAuthForm}
         onSubmit={handleAuthSubmit}
@@ -1364,7 +1369,7 @@ function isPlainPointerClick(event, start) {
   return Math.abs(event.clientX - start.x) < 4 && Math.abs(event.clientY - start.y) < 4;
 }
 
-function AuthScreen({ mode, form, error, onModeChange, onFormChange, onSubmit }) {
+function AuthScreen({ mode, form, error, notice, onModeChange, onFormChange, onSubmit }) {
   const isSignup = mode === 'signup';
   return (
     <main className="auth-screen">
@@ -1409,6 +1414,7 @@ function AuthScreen({ mode, form, error, onModeChange, onFormChange, onSubmit })
             />
           </label>
           {error && <p className="auth-error">{error}</p>}
+          {notice && <p className="auth-notice">{notice}</p>}
           <button type="submit">{isSignup ? '注册' : '登录'}</button>
         </form>
 

@@ -49,6 +49,8 @@ exception
 end;
 $$;
 
+alter table public.documents replica identity full;
+
 create or replace function public.invite_collaborator_by_email(
   target_document_id uuid,
   target_email text,
