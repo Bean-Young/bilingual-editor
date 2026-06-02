@@ -33,6 +33,9 @@ create table if not exists public.document_collaborators (
   primary key (document_id, user_id)
 );
 
+alter table if exists public.document_collaborators
+  drop column if exists role;
+
 create index if not exists documents_owner_updated_idx
   on public.documents (owner_id, updated_at desc);
 

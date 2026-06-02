@@ -288,6 +288,34 @@ function classNames(...names) {
   return names.filter(Boolean).join(' ');
 }
 
+function isSupportedLanguage(code) {
+  return LANGUAGES.some((language) => language.code === code);
+}
+
+function settingsFromProfile(profile, fallbackSettings) {
+  const sourceLang = isSupportedLanguage(profile.default_source_lang) ? profile.default_source_lang : fallbackSettings.sourceLang;
+  const targetLang = isSupportedLanguage(profile.default_target_lang) ? profile.default_target_lang : fallbackSettings.targetLang;
+  const profileHue = Number(profile.theme_hue);
+  return {
+    ...fallbackSettings,
+    accentHue: Number.isFinite(profileHue) ? profileHue : fallbackSettings.accentHue,
+    sourceLang,
+    targetLang,
+    autoDetect: sourceLang === 'auto' && targetLang === 'auto',
+  };
+}
+
+function defaultProfilePayload(user, settings) {
+  return {
+    id: user.id,
+    email: user.email,
+    display_name: user.user_metadata?.display_name || user.email?.split('@')[0] || '用户',
+    theme_hue: settings.accentHue,
+    default_source_lang: settings.sourceLang,
+    default_target_lang: settings.targetLang,
+  };
+}
+
 function documentFromRow(row) {
   return {
     fileName: row.file_name,
@@ -353,9 +381,13 @@ function App() {
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [shareEmail, setShareEmail] = useState('');
   const [shareStatus, setShareStatus] = useState('');
+  const [profile, setProfile] = useState(null);
+  const [displayNameDraft, setDisplayNameDraft] = useState('');
+  const [profileStatus, setProfileStatus] = useState('');
   const fileRef = useRef(null);
   const splitAreaRef = useRef(null);
   const saveTimerRef = useRef(null);
+  const profileTimerRef = useRef(null);
   const remoteUpdateRef = useRef(false);
 
   const stats = useMemo(() => {
@@ -370,6 +402,7 @@ function App() {
   const visibleComments = doc.comments;
   const currentUser = session?.user ?? null;
   const cloudEnabled = isSupabaseConfigured && Boolean(currentUser);
+  const userDisplayName = profile?.display_name || currentUser?.user_metadata?.display_name || currentUser?.email;
 
   function pushUndoSnapshot(snapshot = doc) {
     setUndoSnapshot(snapshot);
@@ -467,6 +500,9 @@ function App() {
         setCloudDocs([]);
         setSelectedDocId(null);
         setOnlineUsers([]);
+        setProfile(null);
+        setDisplayNameDraft('');
+        setProfileStatus('');
       }
     });
 
@@ -480,6 +516,17 @@ function App() {
     if (!cloudEnabled) return;
     loadCloudDocuments();
   }, [cloudEnabled]);
+
+  useEffect(() => {
+    if (!cloudEnabled) {
+      setProfile(null);
+      setDisplayNameDraft('');
+      setProfileStatus('');
+      return;
+    }
+
+    loadUserProfile();
+  }, [cloudEnabled, currentUser?.id]);
 
   useEffect(() => {
     if (!cloudEnabled || !selectedDocId) return undefined;
@@ -503,6 +550,7 @@ function App() {
           await channel.track({
             userId: currentUser.id,
             email: currentUser.email,
+            displayName: userDisplayName,
             onlineAt: new Date().toISOString(),
           });
         }
@@ -512,7 +560,7 @@ function App() {
       setOnlineUsers([]);
       supabase.removeChannel(channel);
     };
-  }, [cloudEnabled, selectedDocId, currentUser?.id, currentUser?.email]);
+  }, [cloudEnabled, selectedDocId, currentUser?.id, currentUser?.email, userDisplayName]);
 
   useEffect(() => {
     if (!cloudEnabled || !selectedDocId) return undefined;
@@ -528,6 +576,98 @@ function App() {
 
     return () => window.clearTimeout(saveTimerRef.current);
   }, [cloudEnabled, selectedDocId, doc.sourceText, doc.targetText, doc.fileName, doc.format, doc.lastEdited, doc.comments]);
+
+  useEffect(() => () => window.clearTimeout(profileTimerRef.current), []);
+
+  async function loadUserProfile() {
+    if (!cloudEnabled || !currentUser) return;
+    setProfileStatus('正在加载用户资料...');
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id,email,display_name,theme_hue,default_source_lang,default_target_lang,updated_at')
+      .eq('id', currentUser.id)
+      .maybeSingle();
+
+    if (error) {
+      setProfileStatus(`用户资料加载失败：${error.message}`);
+      return;
+    }
+
+    let nextProfile = data;
+    if (!nextProfile) {
+      const { data: created, error: createError } = await supabase
+        .from('profiles')
+        .upsert(defaultProfilePayload(currentUser, settings), { onConflict: 'id' })
+        .select('id,email,display_name,theme_hue,default_source_lang,default_target_lang,updated_at')
+        .single();
+
+      if (createError) {
+        setProfileStatus(`用户资料创建失败：${createError.message}`);
+        return;
+      }
+      nextProfile = created;
+    }
+
+    setProfile(nextProfile);
+    setDisplayNameDraft(nextProfile.display_name || currentUser.email?.split('@')[0] || '');
+    setSettings((current) => settingsFromProfile(nextProfile, current));
+    setProfileStatus('用户资料已同步');
+  }
+
+  function scheduleProfileSave(nextSettings = settings) {
+    if (!cloudEnabled || !currentUser) return;
+    window.clearTimeout(profileTimerRef.current);
+    profileTimerRef.current = window.setTimeout(async () => {
+      const payload = {
+        id: currentUser.id,
+        email: currentUser.email,
+        display_name: profile?.display_name || currentUser.user_metadata?.display_name || currentUser.email?.split('@')[0],
+        theme_hue: nextSettings.accentHue,
+        default_source_lang: nextSettings.sourceLang,
+        default_target_lang: nextSettings.targetLang,
+      };
+      const { data, error } = await supabase
+        .from('profiles')
+        .upsert(payload, { onConflict: 'id' })
+        .select('id,email,display_name,theme_hue,default_source_lang,default_target_lang,updated_at')
+        .single();
+
+      if (error) {
+        setProfileStatus(`设置保存失败：${error.message}`);
+        return;
+      }
+
+      setProfile(data);
+      setProfileStatus('设置已保存到账号');
+    }, 500);
+  }
+
+  async function saveDisplayName() {
+    if (!cloudEnabled || !currentUser) return;
+    const cleanName = displayNameDraft.trim() || currentUser.email?.split('@')[0] || '用户';
+    setProfileStatus('正在保存用户资料...');
+    const { data, error } = await supabase
+      .from('profiles')
+      .upsert({
+        id: currentUser.id,
+        email: currentUser.email,
+        display_name: cleanName,
+        theme_hue: settings.accentHue,
+        default_source_lang: settings.sourceLang,
+        default_target_lang: settings.targetLang,
+      }, { onConflict: 'id' })
+      .select('id,email,display_name,theme_hue,default_source_lang,default_target_lang,updated_at')
+      .single();
+
+    if (error) {
+      setProfileStatus(`用户资料保存失败：${error.message}`);
+      return;
+    }
+
+    setProfile(data);
+    setDisplayNameDraft(data.display_name || cleanName);
+    setProfileStatus('用户资料已保存');
+  }
 
   async function handleAuthSubmit(event) {
     event.preventDefault();
@@ -822,6 +962,7 @@ function App() {
       autoDetect: nextSettings.sourceLang === 'auto' && nextSettings.targetLang === 'auto',
     };
     setSettings(normalizedSettings);
+    scheduleProfileSave(normalizedSettings);
     pushUndoSnapshot();
     setDoc((current) => {
       if (syncMode !== 'auto') return current;
@@ -979,8 +1120,9 @@ function App() {
               <div className="cloud-user">
                 <UserRound size={16} />
                 <div>
-                  <strong>{currentUser.email}</strong>
-                  <span>{cloudStatus}</span>
+                  <strong>{userDisplayName}</strong>
+                  <span>{currentUser.email}</span>
+                  <em>{profileStatus || cloudStatus}</em>
                 </div>
               </div>
               <button className="secondary-action" onClick={signOut}>退出登录</button>
@@ -1077,7 +1219,7 @@ function App() {
               <strong>当前在线</strong>
               {onlineUsers.length === 0 && <span>等待协作者加入</span>}
               {onlineUsers.map((user) => (
-                <span key={user.userId}>{user.email}</span>
+                <span key={user.userId}>{user.displayName || user.email}</span>
               ))}
             </div>
           </div>
@@ -1236,7 +1378,12 @@ function App() {
       {settingsOpen && (
         <SettingsPanel
           settings={settings}
+          cloudEnabled={cloudEnabled}
+          displayName={displayNameDraft}
+          profileStatus={profileStatus}
           onChange={applySettings}
+          onDisplayNameChange={setDisplayNameDraft}
+          onDisplayNameSave={saveDisplayName}
           onClose={() => setSettingsOpen(false)}
         />
       )}
@@ -1449,7 +1596,7 @@ function AuthScreen({ mode, form, error, notice, onModeChange, onFormChange, onS
   );
 }
 
-function SettingsPanel({ settings, onChange, onClose }) {
+function SettingsPanel({ settings, cloudEnabled, displayName, profileStatus, onChange, onDisplayNameChange, onDisplayNameSave, onClose }) {
   function update(patch) {
     onChange({ ...settings, ...patch });
   }
@@ -1460,10 +1607,26 @@ function SettingsPanel({ settings, onChange, onClose }) {
         <div className="settings-header">
           <div>
             <strong>设置</strong>
-            <span>主题与翻译方向</span>
+            <span>账号、主题与翻译方向</span>
           </div>
           <button onClick={onClose} title="关闭"><X size={16} /></button>
         </div>
+
+        {cloudEnabled && (
+          <div className="settings-section">
+            <label className="settings-label">用户信息</label>
+            <div className="profile-form">
+              <input
+                value={displayName}
+                onChange={(event) => onDisplayNameChange(event.target.value)}
+                placeholder="显示名"
+                aria-label="显示名"
+              />
+              <button type="button" onClick={onDisplayNameSave}>保存</button>
+            </div>
+            {profileStatus && <p className="settings-note">{profileStatus}</p>}
+          </div>
+        )}
 
         <div className="settings-section">
           <label className="settings-label">主题色</label>
