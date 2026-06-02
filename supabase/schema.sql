@@ -218,7 +218,15 @@ with check (auth.uid() = id);
 drop policy if exists "documents_select_owned_or_shared" on public.documents;
 create policy "documents_select_owned_or_shared"
 on public.documents for select
-using (public.can_access_document(id));
+using (
+  owner_id = auth.uid()
+  or exists (
+    select 1
+    from public.document_collaborators dc
+    where dc.document_id = id
+      and dc.user_id = auth.uid()
+  )
+);
 
 drop policy if exists "documents_insert_own" on public.documents;
 create policy "documents_insert_own"
@@ -229,8 +237,24 @@ drop policy if exists "documents_update_owned_or_editor" on public.documents;
 drop policy if exists "documents_update_owned_or_shared" on public.documents;
 create policy "documents_update_owned_or_shared"
 on public.documents for update
-using (public.can_edit_document(id))
-with check (public.can_edit_document(id));
+using (
+  owner_id = auth.uid()
+  or exists (
+    select 1
+    from public.document_collaborators dc
+    where dc.document_id = id
+      and dc.user_id = auth.uid()
+  )
+)
+with check (
+  owner_id = auth.uid()
+  or exists (
+    select 1
+    from public.document_collaborators dc
+    where dc.document_id = id
+      and dc.user_id = auth.uid()
+  )
+);
 
 drop policy if exists "documents_delete_owner" on public.documents;
 create policy "documents_delete_owner"
@@ -260,3 +284,12 @@ drop policy if exists "collaborators_delete_owner" on public.document_collaborat
 create policy "collaborators_delete_owner"
 on public.document_collaborators for delete
 using (public.is_document_owner(document_id));
+
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on public.profiles to authenticated;
+grant select, insert, update, delete on public.documents to authenticated;
+grant select, insert, update, delete on public.document_collaborators to authenticated;
+grant execute on function public.invite_collaborator_by_email(uuid, text) to authenticated;
+grant execute on function public.is_document_owner(uuid) to authenticated;
+grant execute on function public.can_access_document(uuid) to authenticated;
+grant execute on function public.can_edit_document(uuid) to authenticated;
