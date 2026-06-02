@@ -28,7 +28,6 @@ create table if not exists public.documents (
 create table if not exists public.document_collaborators (
   document_id uuid not null references public.documents(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
-  role text not null default 'editor' check (role = 'editor'),
   invited_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   primary key (document_id, user_id)
@@ -51,10 +50,11 @@ $$;
 
 alter table public.documents replica identity full;
 
+drop function if exists public.invite_collaborator_by_email(uuid, text, text);
+
 create or replace function public.invite_collaborator_by_email(
   target_document_id uuid,
-  target_email text,
-  target_role text default 'editor'
+  target_email text
 )
 returns public.document_collaborators
 language plpgsql
@@ -82,10 +82,10 @@ begin
     raise exception 'No registered user found for that email';
   end if;
 
-  insert into public.document_collaborators (document_id, user_id, role, invited_by)
-  values (target_document_id, target_user_id, target_role, auth.uid())
+  insert into public.document_collaborators (document_id, user_id, invited_by)
+  values (target_document_id, target_user_id, auth.uid())
   on conflict (document_id, user_id)
-  do update set role = excluded.role
+  do update set invited_by = excluded.invited_by
   returning * into inserted;
 
   return inserted;
@@ -201,6 +201,11 @@ create policy "profiles_select_own"
 on public.profiles for select
 using (auth.uid() = id);
 
+drop policy if exists "profiles_insert_own" on public.profiles;
+create policy "profiles_insert_own"
+on public.profiles for insert
+with check (auth.uid() = id);
+
 drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_update_own"
 on public.profiles for update
@@ -218,7 +223,8 @@ on public.documents for insert
 with check (owner_id = auth.uid());
 
 drop policy if exists "documents_update_owned_or_editor" on public.documents;
-create policy "documents_update_owned_or_editor"
+drop policy if exists "documents_update_owned_or_shared" on public.documents;
+create policy "documents_update_owned_or_shared"
 on public.documents for update
 using (public.can_edit_document(id))
 with check (public.can_edit_document(id));

@@ -664,7 +664,7 @@ function App() {
     }
 
     setShareEmail('');
-    setShareStatus('已添加协作者');
+    setShareStatus('已添加，可编辑');
   }
 
   async function handleFileChange(event) {
