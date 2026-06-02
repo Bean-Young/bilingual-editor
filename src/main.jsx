@@ -5,6 +5,7 @@ import {
   ArrowRightLeft,
   Check,
   ChevronDown,
+  Cloud,
   Download,
   FileText,
   GripVertical,
@@ -13,14 +14,18 @@ import {
   Link2,
   MessageSquarePlus,
   PanelRight,
+  Plus,
   RotateCcw,
   Save,
   Search,
   Settings,
   Upload,
+  UserRound,
+  Users,
   X,
 } from 'lucide-react';
 import { saveAs } from 'file-saver';
+import { isSupabaseConfigured, supabase } from './supabaseClient';
 import './styles.css';
 
 const SAMPLE_SOURCE = String.raw`\section{Introduction}
@@ -283,6 +288,36 @@ function classNames(...names) {
   return names.filter(Boolean).join(' ');
 }
 
+function documentFromRow(row) {
+  return {
+    fileName: row.file_name,
+    format: row.format,
+    savedAt: row.updated_at ? new Date(row.updated_at).toLocaleString('zh-CN', { hour12: false }) : null,
+    sourceText: row.source_text ?? '',
+    targetText: row.target_text ?? '',
+    lastEdited: row.last_edited ?? null,
+    comments: Array.isArray(row.comments) ? row.comments : [],
+  };
+}
+
+function documentPayload(doc, userId, includeOwner = true) {
+  const payload = {
+    title: doc.fileName || 'Untitled document',
+    file_name: doc.fileName || 'untitled.tex',
+    format: doc.format || 'txt',
+    source_text: doc.sourceText || '',
+    target_text: doc.targetText || '',
+    comments: doc.comments || [],
+    last_edited: doc.lastEdited,
+  };
+  if (includeOwner) payload.owner_id = userId;
+  return payload;
+}
+
+function documentListTitle(row) {
+  return row.title || row.file_name || 'Untitled document';
+}
+
 function App() {
   const [doc, setDoc] = useState(createInitialState);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
@@ -297,8 +332,22 @@ function App() {
   const [undoSnapshot, setUndoSnapshot] = useState(null);
   const [selectedCommentText, setSelectedCommentText] = useState({ side: null, text: '', rect: null });
   const [draftComment, setDraftComment] = useState(null);
+  const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
+  const [session, setSession] = useState(null);
+  const [authMode, setAuthMode] = useState('signin');
+  const [authForm, setAuthForm] = useState({ email: '', password: '', displayName: '' });
+  const [authError, setAuthError] = useState('');
+  const [cloudDocs, setCloudDocs] = useState([]);
+  const [selectedDocId, setSelectedDocId] = useState(null);
+  const [cloudLoading, setCloudLoading] = useState(false);
+  const [cloudStatus, setCloudStatus] = useState(isSupabaseConfigured ? '等待登录' : '本地模式');
+  const [shareEmail, setShareEmail] = useState('');
+  const [shareRole, setShareRole] = useState('editor');
+  const [shareStatus, setShareStatus] = useState('');
   const fileRef = useRef(null);
   const splitAreaRef = useRef(null);
+  const saveTimerRef = useRef(null);
+  const remoteUpdateRef = useRef(false);
 
   const stats = useMemo(() => {
     const unresolved = doc.comments.filter((item) => !item.resolved).length;
@@ -310,6 +359,8 @@ function App() {
   }, [doc]);
 
   const visibleComments = doc.comments;
+  const currentUser = session?.user ?? null;
+  const cloudEnabled = isSupabaseConfigured && Boolean(currentUser);
 
   function pushUndoSnapshot(snapshot = doc) {
     setUndoSnapshot(snapshot);
@@ -388,6 +439,210 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isSupabaseConfigured) return undefined;
+    let mounted = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setSession(data.session);
+      setAuthReady(true);
+      setCloudStatus(data.session ? '已连接云端' : '等待登录');
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthReady(true);
+      setCloudStatus(nextSession ? '已连接云端' : '等待登录');
+      if (!nextSession) {
+        setCloudDocs([]);
+        setSelectedDocId(null);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cloudEnabled) return;
+    loadCloudDocuments();
+  }, [cloudEnabled]);
+
+  useEffect(() => {
+    if (!cloudEnabled || !selectedDocId) return undefined;
+
+    const channel = supabase
+      .channel(`document:${selectedDocId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'documents', filter: `id=eq.${selectedDocId}` },
+        ({ new: row }) => {
+          remoteUpdateRef.current = true;
+          setDoc(documentFromRow(row));
+          setCloudStatus(`收到协作者更新 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [cloudEnabled, selectedDocId]);
+
+  useEffect(() => {
+    if (!cloudEnabled || !selectedDocId) return undefined;
+    if (remoteUpdateRef.current) {
+      remoteUpdateRef.current = false;
+      return undefined;
+    }
+
+    window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      persistCloudDocument(doc, selectedDocId);
+    }, 900);
+
+    return () => window.clearTimeout(saveTimerRef.current);
+  }, [cloudEnabled, selectedDocId, doc.sourceText, doc.targetText, doc.fileName, doc.format, doc.lastEdited, doc.comments]);
+
+  async function handleAuthSubmit(event) {
+    event.preventDefault();
+    setAuthError('');
+    const email = authForm.email.trim();
+    const password = authForm.password;
+    if (!email || !password) {
+      setAuthError('请输入邮箱和密码');
+      return;
+    }
+
+    const result = authMode === 'signup'
+      ? await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { display_name: authForm.displayName.trim() || email.split('@')[0] } },
+      })
+      : await supabase.auth.signInWithPassword({ email, password });
+
+    if (result.error) {
+      setAuthError(result.error.message);
+      return;
+    }
+
+    setCloudStatus(authMode === 'signup' && !result.data.session ? '已发送验证邮件' : '登录成功');
+  }
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    setDoc(createInitialState());
+    setStatus('已退出登录');
+  }
+
+  async function loadCloudDocuments(selectFirst = true) {
+    if (!cloudEnabled) return;
+    setCloudLoading(true);
+    const { data, error } = await supabase
+      .from('documents')
+      .select('id,title,file_name,format,owner_id,updated_at,created_at')
+      .order('updated_at', { ascending: false });
+
+    setCloudLoading(false);
+    if (error) {
+      setCloudStatus(`云端加载失败：${error.message}`);
+      return;
+    }
+
+    setCloudDocs(data ?? []);
+    if (selectFirst && !selectedDocId && data?.length) {
+      await openCloudDocument(data[0].id);
+    }
+  }
+
+  async function openCloudDocument(documentId) {
+    setCloudLoading(true);
+    const { data, error } = await supabase
+      .from('documents')
+      .select('*')
+      .eq('id', documentId)
+      .single();
+    setCloudLoading(false);
+
+    if (error) {
+      setCloudStatus(`打开失败：${error.message}`);
+      return;
+    }
+
+    remoteUpdateRef.current = true;
+    setSelectedDocId(data.id);
+    setDoc(documentFromRow(data));
+    setStatus(`已打开云端文档 ${data.file_name}`);
+    setCloudStatus('云端文档已同步');
+  }
+
+  async function createCloudDocumentFromCurrent() {
+    await createCloudDocument(doc);
+  }
+
+  async function createCloudDocument(nextDoc) {
+    if (!cloudEnabled) return;
+    setCloudLoading(true);
+    const { data, error } = await supabase
+      .from('documents')
+      .insert(documentPayload({ ...nextDoc, fileName: nextDoc.fileName || 'untitled.tex' }, currentUser.id))
+      .select('*')
+      .single();
+    setCloudLoading(false);
+
+    if (error) {
+      setCloudStatus(`创建失败：${error.message}`);
+      return;
+    }
+
+    setSelectedDocId(data.id);
+    setCloudDocs((items) => [data, ...items.filter((item) => item.id !== data.id)]);
+    setCloudStatus('已创建云端文档');
+    setStatus('已保存到云端');
+  }
+
+  async function persistCloudDocument(nextDoc = doc, documentId = selectedDocId) {
+    if (!cloudEnabled || !documentId) return;
+    setCloudStatus('正在保存...');
+    const { data, error } = await supabase
+      .from('documents')
+      .update(documentPayload(nextDoc, currentUser.id, false))
+      .eq('id', documentId)
+      .select('id,title,file_name,format,owner_id,updated_at,created_at')
+      .single();
+
+    if (error) {
+      setCloudStatus(`保存失败：${error.message}`);
+      return;
+    }
+
+    setCloudDocs((items) => [data, ...items.filter((item) => item.id !== data.id)]);
+    setCloudStatus(`已保存 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`);
+  }
+
+  async function inviteCollaborator(event) {
+    event.preventDefault();
+    if (!selectedDocId || !shareEmail.trim()) return;
+    setShareStatus('正在邀请...');
+    const { error } = await supabase.rpc('invite_collaborator_by_email', {
+      target_document_id: selectedDocId,
+      target_email: shareEmail.trim(),
+      target_role: shareRole,
+    });
+
+    if (error) {
+      setShareStatus(`邀请失败：${error.message}`);
+      return;
+    }
+
+    setShareEmail('');
+    setShareStatus('已添加协作者');
+  }
+
   async function handleFileChange(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -405,8 +660,7 @@ function App() {
       rawText = await file.text();
     }
 
-    pushUndoSnapshot();
-    setDoc({
+    const nextDoc = {
       fileName: file.name,
       format,
       savedAt: null,
@@ -414,9 +668,15 @@ function App() {
       targetText: translateText(rawText, resolveDirection(rawText, settings).targetLang, resolveDirection(rawText, settings).sourceLang),
       lastEdited: null,
       comments: [],
-    });
+    };
+
+    pushUndoSnapshot();
+    setDoc(nextDoc);
     setActiveSide('source');
     setStatus(`已导入 ${file.name}`);
+    if (cloudEnabled) {
+      await createCloudDocument(nextDoc);
+    }
     event.target.value = '';
   }
 
@@ -583,7 +843,17 @@ function App() {
     setStatus('已互换翻译语言');
   }
 
-  function saveSnapshot() {
+  async function saveSnapshot() {
+    if (cloudEnabled) {
+      if (selectedDocId) {
+        await persistCloudDocument(doc, selectedDocId);
+        setStatus('已保存到云端');
+      } else {
+        await createCloudDocumentFromCurrent();
+      }
+      return;
+    }
+
     const savedAt = new Date().toLocaleString('zh-CN', { hour12: false });
     const snapshot = { ...doc, savedAt };
     localStorage.setItem('bilingual-editor:last-document', JSON.stringify(snapshot));
@@ -648,6 +918,23 @@ function App() {
   const sourceCommentHighlights = getCommentHighlights(visibleComments, 'source', draftComment);
   const targetCommentHighlights = getCommentHighlights(visibleComments, 'target', draftComment);
 
+  if (!authReady) {
+    return <div className="loading-screen">正在连接云端...</div>;
+  }
+
+  if (isSupabaseConfigured && !session) {
+    return (
+      <AuthScreen
+        mode={authMode}
+        form={authForm}
+        error={authError}
+        onModeChange={setAuthMode}
+        onFormChange={setAuthForm}
+        onSubmit={handleAuthSubmit}
+      />
+    );
+  }
+
   return (
     <div className={classNames('app-shell', sidebarCollapsed && 'sidebar-collapsed')} style={themeVars(settings.accentHue)}>
       <aside className="sidebar">
@@ -659,6 +946,31 @@ function App() {
           <button className="sidebar-toggle" onClick={() => setSidebarCollapsed(true)} title="收起侧栏" aria-label="收起侧栏">
             <ChevronDown size={15} />
           </button>
+        </div>
+
+        <div className="cloud-box">
+          {cloudEnabled ? (
+            <>
+              <div className="cloud-user">
+                <UserRound size={16} />
+                <div>
+                  <strong>{currentUser.email}</strong>
+                  <span>{cloudStatus}</span>
+                </div>
+              </div>
+              <button className="secondary-action" onClick={signOut}>退出登录</button>
+            </>
+          ) : (
+            <>
+              <div className="cloud-user">
+                <Cloud size={16} />
+                <div>
+                  <strong>本地模式</strong>
+                  <span>配置 Supabase 后启用注册、登录和协作。</span>
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <button className="primary-action" onClick={() => fileRef.current?.click()}>
@@ -692,6 +1004,56 @@ function App() {
             </div>
           </div>
         </div>
+
+        {cloudEnabled && (
+          <div className="side-section">
+            <div className="section-title action-title">
+              <span>云文档</span>
+              <button onClick={createCloudDocumentFromCurrent} disabled={cloudLoading} title="把当前内容保存为新云文档">
+                <Plus size={14} />
+              </button>
+            </div>
+            <div className="cloud-doc-list">
+              {cloudDocs.length === 0 && <span className="empty-line">暂无云文档</span>}
+              {cloudDocs.map((item) => (
+                <button
+                  key={item.id}
+                  className={item.id === selectedDocId ? 'active' : ''}
+                  onClick={() => openCloudDocument(item.id)}
+                >
+                  <strong>{documentListTitle(item)}</strong>
+                  <span>{new Date(item.updated_at).toLocaleString('zh-CN', { hour12: false })}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {cloudEnabled && selectedDocId && (
+          <div className="side-section">
+            <div className="section-title">协作共享</div>
+            <form className="share-form" onSubmit={inviteCollaborator}>
+              <label>
+                <span>协作者邮箱</span>
+                <input
+                  value={shareEmail}
+                  onChange={(event) => setShareEmail(event.target.value)}
+                  type="email"
+                  placeholder="name@example.com"
+                />
+              </label>
+              <select value={shareRole} onChange={(event) => setShareRole(event.target.value)}>
+                <option value="editor">可编辑</option>
+                <option value="viewer">只读</option>
+              </select>
+              <button type="submit">
+                <Users size={14} />
+                邀请协作
+              </button>
+              {shareStatus && <em>{shareStatus}</em>}
+            </form>
+          </div>
+        )}
 
         <div className="side-section">
           <div className="section-title">文档结构</div>
@@ -1000,6 +1362,62 @@ function clamp(value, min, max) {
 function isPlainPointerClick(event, start) {
   if (!start || !event.target.closest?.('.document-pane')) return false;
   return Math.abs(event.clientX - start.x) < 4 && Math.abs(event.clientY - start.y) < 4;
+}
+
+function AuthScreen({ mode, form, error, onModeChange, onFormChange, onSubmit }) {
+  const isSignup = mode === 'signup';
+  return (
+    <main className="auth-screen">
+      <section className="auth-panel">
+        <div className="auth-brand">
+          <div className="brand-mark"><Languages size={22} /></div>
+          <div>
+            <strong>双语稿件台</strong>
+            <span>登录后保存文档并邀请多人协作。</span>
+          </div>
+        </div>
+
+        <form className="auth-form" onSubmit={onSubmit}>
+          {isSignup && (
+            <label>
+              <span>显示名</span>
+              <input
+                value={form.displayName}
+                onChange={(event) => onFormChange({ ...form, displayName: event.target.value })}
+                placeholder="Yuezhe"
+              />
+            </label>
+          )}
+          <label>
+            <span>邮箱</span>
+            <input
+              value={form.email}
+              onChange={(event) => onFormChange({ ...form, email: event.target.value })}
+              type="email"
+              autoComplete="email"
+              placeholder="name@example.com"
+            />
+          </label>
+          <label>
+            <span>密码</span>
+            <input
+              value={form.password}
+              onChange={(event) => onFormChange({ ...form, password: event.target.value })}
+              type="password"
+              autoComplete={isSignup ? 'new-password' : 'current-password'}
+              placeholder="至少 6 位"
+            />
+          </label>
+          {error && <p className="auth-error">{error}</p>}
+          <button type="submit">{isSignup ? '注册' : '登录'}</button>
+        </form>
+
+        <button className="auth-switch" onClick={() => onModeChange(isSignup ? 'signin' : 'signup')}>
+          {isSignup ? '已有账号，去登录' : '没有账号，注册一个'}
+        </button>
+      </section>
+    </main>
+  );
 }
 
 function SettingsPanel({ settings, onChange, onClose }) {
