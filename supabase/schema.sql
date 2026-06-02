@@ -28,7 +28,7 @@ create table if not exists public.documents (
 create table if not exists public.document_collaborators (
   document_id uuid not null references public.documents(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
-  role text not null default 'editor' check (role in ('viewer', 'editor')),
+  role text not null default 'editor' check (role = 'editor'),
   invited_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   primary key (document_id, user_id)
@@ -65,10 +65,6 @@ declare
   target_user_id uuid;
   inserted public.document_collaborators;
 begin
-  if target_role not in ('viewer', 'editor') then
-    raise exception 'Invalid collaborator role';
-  end if;
-
   if not exists (
     select 1 from public.documents d
     where d.id = target_document_id
@@ -150,7 +146,6 @@ as $$
     from public.document_collaborators dc
     where dc.document_id = target_document_id
       and dc.user_id = auth.uid()
-      and dc.role = 'editor'
   );
 $$;
 

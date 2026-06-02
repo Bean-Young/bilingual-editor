@@ -6,7 +6,7 @@ An Overleaf-inspired bilingual document editor for writing, translating, and rev
 
 - Supabase email/password registration and login
 - Cloud document list for each signed-in user
-- Shared document access with owner/editor permissions
+- Shared document access where invited users can edit together
 - Realtime document sync for collaborators
 - Side-by-side source and translation editing
 - Editable rendered view and raw source view

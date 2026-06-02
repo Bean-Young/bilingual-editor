@@ -318,6 +318,14 @@ function documentListTitle(row) {
   return row.title || row.file_name || 'Untitled document';
 }
 
+function normalizePresenceUsers(presenceState) {
+  const users = Object.values(presenceState)
+    .flat()
+    .filter((item) => item?.userId && item?.email);
+  return [...new Map(users.map((item) => [item.userId, item])).values()]
+    .sort((a, b) => a.email.localeCompare(b.email));
+}
+
 function App() {
   const [doc, setDoc] = useState(createInitialState);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
@@ -342,8 +350,8 @@ function App() {
   const [selectedDocId, setSelectedDocId] = useState(null);
   const [cloudLoading, setCloudLoading] = useState(false);
   const [cloudStatus, setCloudStatus] = useState(isSupabaseConfigured ? '等待登录' : '本地模式');
+  const [onlineUsers, setOnlineUsers] = useState([]);
   const [shareEmail, setShareEmail] = useState('');
-  const [shareRole, setShareRole] = useState('editor');
   const [shareStatus, setShareStatus] = useState('');
   const fileRef = useRef(null);
   const splitAreaRef = useRef(null);
@@ -458,6 +466,7 @@ function App() {
       if (!nextSession) {
         setCloudDocs([]);
         setSelectedDocId(null);
+        setOnlineUsers([]);
       }
     });
 
@@ -486,12 +495,24 @@ function App() {
           setCloudStatus(`收到协作者更新 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`);
         }
       )
-      .subscribe();
+      .on('presence', { event: 'sync' }, () => {
+        setOnlineUsers(normalizePresenceUsers(channel.presenceState()));
+      })
+      .subscribe(async (realtimeStatus) => {
+        if (realtimeStatus === 'SUBSCRIBED') {
+          await channel.track({
+            userId: currentUser.id,
+            email: currentUser.email,
+            onlineAt: new Date().toISOString(),
+          });
+        }
+      });
 
     return () => {
+      setOnlineUsers([]);
       supabase.removeChannel(channel);
     };
-  }, [cloudEnabled, selectedDocId]);
+  }, [cloudEnabled, selectedDocId, currentUser?.id, currentUser?.email]);
 
   useEffect(() => {
     if (!cloudEnabled || !selectedDocId) return undefined;
@@ -635,7 +656,6 @@ function App() {
     const { error } = await supabase.rpc('invite_collaborator_by_email', {
       target_document_id: selectedDocId,
       target_email: shareEmail.trim(),
-      target_role: shareRole,
     });
 
     if (error) {
@@ -1047,16 +1067,19 @@ function App() {
                   placeholder="name@example.com"
                 />
               </label>
-              <select value={shareRole} onChange={(event) => setShareRole(event.target.value)}>
-                <option value="editor">可编辑</option>
-                <option value="viewer">只读</option>
-              </select>
               <button type="submit">
                 <Users size={14} />
                 邀请协作
               </button>
               {shareStatus && <em>{shareStatus}</em>}
             </form>
+            <div className="presence-list">
+              <strong>当前在线</strong>
+              {onlineUsers.length === 0 && <span>等待协作者加入</span>}
+              {onlineUsers.map((user) => (
+                <span key={user.userId}>{user.email}</span>
+              ))}
+            </div>
           </div>
         )}
 

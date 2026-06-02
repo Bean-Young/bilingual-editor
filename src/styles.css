@@ -485,6 +485,27 @@ button:disabled {
   line-height: 16px;
 }
 
+.presence-list {
+  display: grid;
+  gap: 5px;
+  padding: 0 10px 12px;
+}
+
+.presence-list strong {
+  color: #52636a;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.presence-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #708087;
+  font-size: 11px;
+  line-height: 16px;
+}
+
 .file-card {
   display: flex;
   align-items: flex-start;

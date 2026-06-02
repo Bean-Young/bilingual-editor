@@ -60,7 +60,8 @@ If Vercel still says the domain is not accessible, wait for DNS propagation and 
 Collaboration currently uses document-level realtime updates:
 
 - Owner can invite registered users by email.
-- Editor collaborators can update the same document.
+- Invited collaborators can update the same document.
+- The sidebar shows who is currently online in the document.
 - Latest saved document state wins.
 
 For character-level Google Docs style merging, the next step is adding a CRDT layer such as Yjs.
