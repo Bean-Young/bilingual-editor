@@ -87,6 +87,8 @@ const DEFAULT_SETTINGS = {
   targetLang: 'auto',
 };
 
+const DEFAULT_DISPLAY_NAME = 'name';
+
 const FORMAT_DETAILS = [
   { key: 'tex', name: 'LaTeX', extensions: '.tex', note: '论文、公式、引用' },
   { key: 'md', name: 'Markdown', extensions: '.md .markdown', note: '标题、列表、代码块' },
@@ -309,7 +311,7 @@ function defaultProfilePayload(user, settings) {
   return {
     id: user.id,
     email: user.email,
-    display_name: user.user_metadata?.display_name || user.email?.split('@')[0] || '用户',
+    display_name: user.user_metadata?.display_name || DEFAULT_DISPLAY_NAME,
     theme_hue: settings.accentHue,
     default_source_lang: settings.sourceLang,
     default_target_lang: settings.targetLang,
@@ -402,7 +404,7 @@ function App() {
   const visibleComments = doc.comments;
   const currentUser = session?.user ?? null;
   const cloudEnabled = isSupabaseConfigured && Boolean(currentUser);
-  const userDisplayName = profile?.display_name || currentUser?.user_metadata?.display_name || currentUser?.email;
+  const userDisplayName = profile?.display_name || currentUser?.user_metadata?.display_name || DEFAULT_DISPLAY_NAME;
 
   function pushUndoSnapshot(snapshot = doc) {
     setUndoSnapshot(snapshot);
@@ -609,7 +611,7 @@ function App() {
     }
 
     setProfile(nextProfile);
-    setDisplayNameDraft(nextProfile.display_name || currentUser.email?.split('@')[0] || '');
+    setDisplayNameDraft(nextProfile.display_name || DEFAULT_DISPLAY_NAME);
     setSettings((current) => settingsFromProfile(nextProfile, current));
     setProfileStatus('用户资料已同步');
   }
@@ -621,7 +623,7 @@ function App() {
       const payload = {
         id: currentUser.id,
         email: currentUser.email,
-        display_name: profile?.display_name || currentUser.user_metadata?.display_name || currentUser.email?.split('@')[0],
+        display_name: profile?.display_name || currentUser.user_metadata?.display_name || DEFAULT_DISPLAY_NAME,
         theme_hue: nextSettings.accentHue,
         default_source_lang: nextSettings.sourceLang,
         default_target_lang: nextSettings.targetLang,
@@ -644,7 +646,7 @@ function App() {
 
   async function saveDisplayName() {
     if (!cloudEnabled || !currentUser) return;
-    const cleanName = displayNameDraft.trim() || currentUser.email?.split('@')[0] || '用户';
+    const cleanName = displayNameDraft.trim() || DEFAULT_DISPLAY_NAME;
     setProfileStatus('正在保存用户资料...');
     const { data, error } = await supabase
       .from('profiles')
@@ -684,7 +686,7 @@ function App() {
       ? await supabase.auth.signUp({
         email,
         password,
-        options: { data: { display_name: authForm.displayName.trim() || email.split('@')[0] } },
+        options: { data: { display_name: authForm.displayName.trim() || DEFAULT_DISPLAY_NAME } },
       })
       : await supabase.auth.signInWithPassword({ email, password });
 
@@ -1219,7 +1221,7 @@ function App() {
               <strong>当前在线</strong>
               {onlineUsers.length === 0 && <span>等待协作者加入</span>}
               {onlineUsers.map((user) => (
-                <span key={user.userId}>{user.displayName || user.email}</span>
+                <span key={user.userId}>{user.displayName || DEFAULT_DISPLAY_NAME}</span>
               ))}
             </div>
           </div>
