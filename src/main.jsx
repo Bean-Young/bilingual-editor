@@ -376,6 +376,7 @@ function App() {
   const [authForm, setAuthForm] = useState({ email: '', password: '', displayName: '' });
   const [authError, setAuthError] = useState('');
   const [authNotice, setAuthNotice] = useState('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
   const [cloudDocs, setCloudDocs] = useState([]);
   const [selectedDocId, setSelectedDocId] = useState(null);
   const [cloudLoading, setCloudLoading] = useState(false);
@@ -675,6 +676,7 @@ function App() {
     event.preventDefault();
     setAuthError('');
     setAuthNotice('');
+    if (authSubmitting) return;
     const email = authForm.email.trim();
     const password = authForm.password;
     if (!email || !password) {
@@ -682,39 +684,44 @@ function App() {
       return;
     }
 
-    let result = authMode === 'signup'
-      ? await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { display_name: authForm.displayName.trim() || DEFAULT_DISPLAY_NAME } },
-      })
-      : await supabase.auth.signInWithPassword({ email, password });
+    setAuthSubmitting(true);
+    try {
+      let result = authMode === 'signup'
+        ? await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { display_name: authForm.displayName.trim() || DEFAULT_DISPLAY_NAME } },
+        })
+        : await supabase.auth.signInWithPassword({ email, password });
 
-    if (result.error) {
-      setAuthError(result.error.message);
-      return;
-    }
-
-    if (authMode === 'signup' && !result.data.session) {
-      result = await supabase.auth.signInWithPassword({ email, password });
       if (result.error) {
-        const needsEmailConfirm = result.error.message.toLowerCase().includes('email not confirmed');
-        setAuthError(needsEmailConfirm
-          ? '注册成功，但 Supabase 仍开启邮箱验证，暂时不能直接登录。请关闭 Authentication > Providers > Email > Confirm email。'
-          : `注册成功，但自动登录失败：${result.error.message}`);
+        setAuthError(result.error.message);
         return;
       }
-    }
 
-    if (!result.data.session) {
-      setAuthError('登录没有返回会话，请刷新后重试。');
-      return;
-    }
+      if (authMode === 'signup' && !result.data.session) {
+        result = await supabase.auth.signInWithPassword({ email, password });
+        if (result.error) {
+          const needsEmailConfirm = result.error.message.toLowerCase().includes('email not confirmed');
+          setAuthError(needsEmailConfirm
+            ? '注册成功，但 Supabase 仍开启邮箱验证，暂时不能直接登录。请关闭 Authentication > Providers > Email > Confirm email。'
+            : `注册成功，但自动登录失败：${result.error.message}`);
+          return;
+        }
+      }
 
-    setSession(result.data.session);
-    const nextMessage = authMode === 'signup' ? '注册成功，已进入编辑器' : '登录成功';
-    setCloudStatus(nextMessage);
-    setAuthNotice(nextMessage);
+      if (!result.data.session) {
+        setAuthError('登录没有返回会话，请刷新后重试。');
+        return;
+      }
+
+      setSession(result.data.session);
+      const nextMessage = authMode === 'signup' ? '注册成功，已进入编辑器' : '登录成功';
+      setCloudStatus(nextMessage);
+      setAuthNotice(nextMessage);
+    } finally {
+      setAuthSubmitting(false);
+    }
   }
 
   async function signOut() {
@@ -1113,6 +1120,7 @@ function App() {
         form={authForm}
         error={authError}
         notice={authNotice}
+        submitting={authSubmitting}
         onModeChange={setAuthMode}
         onFormChange={setAuthForm}
         onSubmit={handleAuthSubmit}
@@ -1558,8 +1566,9 @@ function isPlainPointerClick(event, start) {
   return Math.abs(event.clientX - start.x) < 4 && Math.abs(event.clientY - start.y) < 4;
 }
 
-function AuthScreen({ mode, form, error, notice, onModeChange, onFormChange, onSubmit }) {
+function AuthScreen({ mode, form, error, notice, submitting, onModeChange, onFormChange, onSubmit }) {
   const isSignup = mode === 'signup';
+  const submitLabel = submitting ? (isSignup ? '正在注册...' : '正在登录...') : (isSignup ? '注册' : '登录');
   return (
     <main className="auth-screen">
       <section className="auth-panel">
@@ -1579,6 +1588,7 @@ function AuthScreen({ mode, form, error, notice, onModeChange, onFormChange, onS
                 value={form.displayName}
                 onChange={(event) => onFormChange({ ...form, displayName: event.target.value })}
                 placeholder={DEFAULT_DISPLAY_NAME}
+                disabled={submitting}
               />
             </label>
           )}
@@ -1590,6 +1600,7 @@ function AuthScreen({ mode, form, error, notice, onModeChange, onFormChange, onS
               type="email"
               autoComplete="email"
               placeholder="name@example.com"
+              disabled={submitting}
             />
           </label>
           <label>
@@ -1600,14 +1611,15 @@ function AuthScreen({ mode, form, error, notice, onModeChange, onFormChange, onS
               type="password"
               autoComplete={isSignup ? 'new-password' : 'current-password'}
               placeholder="至少 6 位"
+              disabled={submitting}
             />
           </label>
           {error && <p className="auth-error">{error}</p>}
           {notice && <p className="auth-notice">{notice}</p>}
-          <button type="submit">{isSignup ? '注册' : '登录'}</button>
+          <button type="submit" disabled={submitting}>{submitLabel}</button>
         </form>
 
-        <button className="auth-switch" onClick={() => onModeChange(isSignup ? 'signin' : 'signup')}>
+        <button className="auth-switch" onClick={() => onModeChange(isSignup ? 'signin' : 'signup')} disabled={submitting}>
           {isSignup ? '已有账号，去登录' : '没有账号，注册一个'}
         </button>
       </section>
