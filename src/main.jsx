@@ -1467,6 +1467,7 @@ function DocumentPane({
   onExportText,
 }) {
   const [viewMode, setViewMode] = useState('rendered');
+  const inlineHighlights = buildInlineHighlights(commentHighlights, searchHighlights);
 
   function updateRendered(event) {
     const nextText = serializeRenderedDocument(event.currentTarget, format);
@@ -1512,16 +1513,19 @@ function DocumentPane({
 
       <div className="document-surface" onClick={onFocus}>
         {viewMode === 'raw' ? (
-          <textarea
-            className="whole-textarea"
-            value={text}
-            onFocus={onFocus}
-            onSelect={captureTextareaSelection}
-            onMouseUp={captureTextareaSelection}
-            onKeyUp={captureTextareaSelection}
-            onChange={(event) => onChange(event.target.value)}
-            spellCheck={side === 'source'}
-          />
+          <div className="raw-editor-stack">
+            <pre className="raw-highlight-layer" aria-hidden="true">{renderHighlightedText(text || ' ', inlineHighlights)}</pre>
+            <textarea
+              className="whole-textarea raw-highlight-input"
+              value={text}
+              onFocus={onFocus}
+              onSelect={captureTextareaSelection}
+              onMouseUp={captureTextareaSelection}
+              onKeyUp={captureTextareaSelection}
+              onChange={(event) => onChange(event.target.value)}
+              spellCheck={side === 'source'}
+            />
+          </div>
         ) : (
           <RenderedDocument
             text={text}
