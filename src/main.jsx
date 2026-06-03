@@ -308,6 +308,66 @@ function translateForSync(text, side, settings, fallbackText) {
   return translateText(text, direction.targetLang, direction.sourceLang);
 }
 
+async function requestLlmTranslations(chunks, direction, options = {}) {
+  if (!chunks.length) return [];
+  const response = await fetch('/api/translate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chunks,
+      sourceLang: direction.sourceLang,
+      targetLang: direction.targetLang,
+      format: options.format,
+      mode: options.mode,
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || '大模型翻译失败');
+  }
+  if (!Array.isArray(payload.translations) || payload.translations.length !== chunks.length) {
+    throw new Error('大模型返回结果数量不匹配');
+  }
+  return payload.translations.map((item) => String(item ?? ''));
+}
+
+async function translateDocumentWithLlm(text, side, settings, format, mode = 'import') {
+  const direction = resolveSideDirection(text, side, settings);
+  if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) return null;
+
+  const blocks = segmentSyncBlocks(text);
+  const translatedBlocks = blocks.map((block) => ({ ...block }));
+  const queue = blocks
+    .map((block, index) => ({ index, text: block.text }))
+    .filter((block) => block.text.trim());
+
+  let cursor = 0;
+  while (cursor < queue.length) {
+    const batch = [];
+    let batchChars = 0;
+    while (cursor < queue.length && batch.length < 10) {
+      const item = queue[cursor];
+      if (batch.length && batchChars + item.text.length > 9000) break;
+      batch.push(item);
+      batchChars += item.text.length;
+      cursor += 1;
+    }
+
+    const translations = await requestLlmTranslations(
+      batch.map((item) => item.text),
+      direction,
+      { format, mode }
+    );
+
+    batch.forEach((item, batchIndex) => {
+      translatedBlocks[item.index].text = translations[batchIndex];
+    });
+  }
+
+  return translatedBlocks.map((block) => `${block.text}${block.separator}`).join('');
+}
+
 function segmentSyncBlocks(text) {
   const value = String(text ?? '');
   if (!value) return [];
@@ -361,6 +421,60 @@ function mapUnchangedBlocks(previousBlocks, nextBlocks) {
   }
 
   return mapping;
+}
+
+function changedBlockIndexes(previousText, nextText) {
+  if (previousText === nextText) return [];
+  const previousBlocks = segmentSyncBlocks(previousText);
+  const nextBlocks = segmentSyncBlocks(nextText);
+  const unchangedMap = mapUnchangedBlocks(previousBlocks, nextBlocks);
+  return nextBlocks
+    .map((block, index) => ({ block, index }))
+    .filter(({ block, index }) => block.text.trim() && !unchangedMap.has(index))
+    .map(({ index }) => index);
+}
+
+function replaceSyncBlocks(text, replacements) {
+  const blocks = segmentSyncBlocks(text);
+  return blocks
+    .map((block, index) => `${replacements.has(index) ? replacements.get(index) : block.text}${block.separator}`)
+    .join('');
+}
+
+async function translateChangedBlocksWithLlm(text, blockIndexes, side, settings, format) {
+  const direction = resolveSideDirection(text, side, settings);
+  if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) return new Map();
+
+  const blocks = segmentSyncBlocks(text);
+  const workItems = [...new Set(blockIndexes)]
+    .map((index) => ({ index, text: blocks[index]?.text ?? '' }))
+    .filter((item) => item.text.trim());
+  const replacements = new Map();
+
+  let cursor = 0;
+  while (cursor < workItems.length) {
+    const batch = [];
+    let batchChars = 0;
+    while (cursor < workItems.length && batch.length < 8) {
+      const item = workItems[cursor];
+      if (batch.length && batchChars + item.text.length > 7000) break;
+      batch.push(item);
+      batchChars += item.text.length;
+      cursor += 1;
+    }
+
+    const translations = await requestLlmTranslations(
+      batch.map((item) => item.text),
+      direction,
+      { format, mode: 'refine' }
+    );
+
+    batch.forEach((item, batchIndex) => {
+      replacements.set(item.index, translations[batchIndex]);
+    });
+  }
+
+  return replacements;
 }
 
 function mergeEditedSyncBlocks(previousActiveText, nextActiveText, previousPassiveText, side, settings) {
@@ -582,6 +696,9 @@ function App() {
   const splitAreaRef = useRef(null);
   const saveTimerRef = useRef(null);
   const profileTimerRef = useRef(null);
+  const llmTimerRef = useRef(null);
+  const llmRequestRef = useRef(0);
+  const pendingLlmRefinementRef = useRef(null);
   const remoteUpdateRef = useRef(false);
 
   const stats = useMemo(() => {
@@ -772,7 +889,65 @@ function App() {
     return () => window.clearTimeout(saveTimerRef.current);
   }, [cloudEnabled, selectedDocId, doc.sourceText, doc.targetText, doc.fileName, doc.format, doc.lastEdited, doc.comments]);
 
-  useEffect(() => () => window.clearTimeout(profileTimerRef.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(profileTimerRef.current);
+    window.clearTimeout(llmTimerRef.current);
+  }, []);
+
+  function queueLlmRefinement(side, activeText, previousActiveText, format, nextSettings = settings) {
+    if (syncMode !== 'auto') return;
+    const blockIndexes = changedBlockIndexes(previousActiveText, activeText);
+    if (!blockIndexes.length) return;
+
+    pendingLlmRefinementRef.current = {
+      side,
+      activeText,
+      blockIndexes,
+      format,
+      settings: { ...nextSettings },
+    };
+    window.clearTimeout(llmTimerRef.current);
+    llmTimerRef.current = window.setTimeout(runQueuedLlmRefinement, 3000);
+  }
+
+  async function runQueuedLlmRefinement() {
+    const job = pendingLlmRefinementRef.current;
+    if (!job) return;
+    pendingLlmRefinementRef.current = null;
+    const requestId = llmRequestRef.current + 1;
+    llmRequestRef.current = requestId;
+    setStatus('正在用 Kimi 直译改动段落...');
+
+    try {
+      const replacements = await translateChangedBlocksWithLlm(
+        job.activeText,
+        job.blockIndexes,
+        job.side,
+        job.settings,
+        job.format
+      );
+      if (llmRequestRef.current !== requestId || !replacements.size) return;
+
+      setDoc((current) => {
+        const activeText = job.side === 'source' ? current.sourceText : current.targetText;
+        if (activeText !== job.activeText) return current;
+
+        return {
+          ...current,
+          savedAt: null,
+          targetText: job.side === 'source'
+            ? replaceSyncBlocks(current.targetText, replacements)
+            : current.targetText,
+          sourceText: job.side === 'target'
+            ? replaceSyncBlocks(current.sourceText, replacements)
+            : current.sourceText,
+        };
+      });
+      setStatus('已用 Kimi 更新改动段落');
+    } catch (error) {
+      setStatus(`Kimi 暂不可用，已保留本地同步：${error.message}`);
+    }
+  }
 
   async function loadUserProfile() {
     if (!cloudEnabled || !currentUser) return;
@@ -1042,12 +1217,13 @@ function App() {
       rawText = await file.text();
     }
 
+    const localTargetText = translateForSync(rawText, 'source', settings, '');
     const nextDoc = {
       fileName: file.name,
       format,
       savedAt: null,
       sourceText: rawText,
-      targetText: translateForSync(rawText, 'source', settings, ''),
+      targetText: localTargetText,
       lastEdited: null,
       comments: [],
     };
@@ -1059,11 +1235,30 @@ function App() {
     if (cloudEnabled) {
       await createCloudDocument(nextDoc);
     }
+    setStatus(`正在用 Kimi 分段翻译 ${file.name}`);
+    try {
+      const llmTargetText = await translateDocumentWithLlm(rawText, 'source', settings, format, 'import');
+      if (llmTargetText) {
+        setDoc((current) => {
+          if (current.fileName !== file.name || current.sourceText !== rawText) return current;
+          return {
+            ...current,
+            savedAt: null,
+            targetText: llmTargetText,
+            lastEdited: null,
+          };
+        });
+        setStatus(`已用 Kimi 完成 ${file.name} 分段翻译`);
+      }
+    } catch (error) {
+      setStatus(`Kimi 初次翻译失败，已保留本地规则译文：${error.message}`);
+    }
     event.target.value = '';
   }
 
   function updateText(side, value, options = {}) {
     const shouldSync = options.sync !== false && syncMode === 'auto';
+    const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
     if (options.pushUndo !== false) {
       pushUndoSnapshot();
     }
@@ -1089,11 +1284,15 @@ function App() {
         lastEdited: 'target',
       };
     });
+    if (shouldSync) {
+      queueLlmRefinement(side, value, previousActiveText, doc.format);
+    }
     setActiveSide(side);
     setStatus(syncMode === 'auto' ? '已同步另一侧文档' : '已修改，自动同步暂停');
   }
 
   function previewText(side, value) {
+    const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
     setDoc((current) => {
       if (side === 'source') {
         return {
@@ -1114,6 +1313,9 @@ function App() {
         lastEdited: 'target',
       };
     });
+    if (syncMode === 'auto') {
+      queueLlmRefinement(side, value, previousActiveText, doc.format);
+    }
     setActiveSide(side);
   }
 

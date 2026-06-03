@@ -22,6 +22,15 @@ Add these variables in the Vercel project:
 ```bash
 npx vercel env add VITE_SUPABASE_URL production
 npx vercel env add VITE_SUPABASE_ANON_KEY production
+npx vercel env add NVIDIA_API_KEY production
+```
+
+Optional NVIDIA variables:
+
+```bash
+npx vercel env add NVIDIA_MODEL production
+npx vercel env add NVIDIA_MAX_TOKENS production
+npx vercel env add NVIDIA_TEMPERATURE production
 ```
 
 Then redeploy:
@@ -30,7 +39,8 @@ Then redeploy:
 npx vercel deploy --prod
 ```
 
-The login screen appears only after these variables exist at build time.
+The login screen appears only after the Supabase variables exist at build time.
+The Kimi translation endpoint works only after `NVIDIA_API_KEY` exists at runtime.
 
 ## 3. Domain Setup
 
