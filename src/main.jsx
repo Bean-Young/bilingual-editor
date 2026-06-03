@@ -1105,15 +1105,18 @@ function App() {
     event.target.value = '';
   }
 
-  function updateText(side, value) {
-    pushUndoSnapshot();
+  function updateText(side, value, options = {}) {
+    const shouldSync = options.sync !== false && syncMode === 'auto';
+    if (options.pushUndo !== false) {
+      pushUndoSnapshot();
+    }
     setDoc((current) => {
       if (side === 'source') {
         return {
           ...current,
           savedAt: null,
           sourceText: value,
-          targetText: syncMode === 'auto'
+          targetText: shouldSync
             ? mergeEditedSyncBlocks(current.sourceText, value, current.targetText, 'source', settings)
             : current.targetText,
           lastEdited: 'source',
@@ -1123,7 +1126,7 @@ function App() {
         ...current,
         savedAt: null,
         targetText: value,
-        sourceText: syncMode === 'auto'
+        sourceText: shouldSync
           ? mergeEditedSyncBlocks(current.targetText, value, current.sourceText, 'target', settings)
           : current.sourceText,
         lastEdited: 'target',
@@ -1131,6 +1134,30 @@ function App() {
     });
     setActiveSide(side);
     setStatus(syncMode === 'auto' ? '已同步另一侧文档' : '已修改，自动同步暂停');
+  }
+
+  function previewText(side, value) {
+    setDoc((current) => {
+      if (side === 'source') {
+        return {
+          ...current,
+          savedAt: null,
+          targetText: syncMode === 'auto'
+            ? mergeEditedSyncBlocks(current.sourceText, value, current.targetText, 'source', settings)
+            : current.targetText,
+          lastEdited: 'source',
+        };
+      }
+      return {
+        ...current,
+        savedAt: null,
+        sourceText: syncMode === 'auto'
+          ? mergeEditedSyncBlocks(current.targetText, value, current.sourceText, 'target', settings)
+          : current.sourceText,
+        lastEdited: 'target',
+      };
+    });
+    setActiveSide(side);
   }
 
   function startCommentDraft(side = activeSide) {
@@ -1583,7 +1610,8 @@ function App() {
               searchRelatedBlockIndexes={searchState.source.relatedBlockIndexes}
               onFocus={() => setActiveSide('source')}
               onSelectionChange={(text, rect) => updateCommentSelection('source', text, rect)}
-              onChange={(value) => updateText('source', value)}
+              onChange={(value, options) => updateText('source', value, options)}
+              onPreviewChange={(value) => previewText('source', value)}
               onExportText={() => exportText('source')}
             />
 
@@ -1607,7 +1635,8 @@ function App() {
               searchRelatedBlockIndexes={searchState.target.relatedBlockIndexes}
               onFocus={() => setActiveSide('target')}
               onSelectionChange={(text, rect) => updateCommentSelection('target', text, rect)}
-              onChange={(value) => updateText('target', value)}
+              onChange={(value, options) => updateText('target', value, options)}
+              onPreviewChange={(value) => previewText('target', value)}
               onExportText={() => exportText('target')}
             />
           </div>
@@ -1681,6 +1710,7 @@ function DocumentPane({
   onFocus,
   onSelectionChange,
   onChange,
+  onPreviewChange,
   onExportText,
 }) {
   const [viewMode, setViewMode] = useState('rendered');
@@ -1694,12 +1724,16 @@ function DocumentPane({
     const nextText = serializeRenderedDocument(element, format);
     renderedDirtyRef.current = false;
     if (nextText !== text.trim()) {
-      onChange(nextText);
+      onChange(nextText, { sync: false });
     }
   }
 
-  function markRenderedDirty() {
+  function previewRenderedEdit(event) {
     renderedDirtyRef.current = true;
+    const nextText = serializeRenderedDocument(event.currentTarget, format);
+    if (nextText !== text.trim()) {
+      onPreviewChange(nextText);
+    }
   }
 
   function captureRenderedSelection() {
@@ -1776,7 +1810,7 @@ function DocumentPane({
             searchRelatedBlockIndexes={searchRelatedBlockIndexes}
             editable={active}
             onFocus={onFocus}
-            onInput={markRenderedDirty}
+            onInput={previewRenderedEdit}
             onMouseUp={captureRenderedSelection}
             onKeyUp={captureRenderedSelection}
             onBlur={(event) => commitRenderedEdit(event.currentTarget)}
