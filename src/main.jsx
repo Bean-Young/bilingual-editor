@@ -682,7 +682,7 @@ function App() {
       return;
     }
 
-    const result = authMode === 'signup'
+    let result = authMode === 'signup'
       ? await supabase.auth.signUp({
         email,
         password,
@@ -695,7 +695,24 @@ function App() {
       return;
     }
 
-    const nextMessage = authMode === 'signup' ? '注册成功，已登录' : '登录成功';
+    if (authMode === 'signup' && !result.data.session) {
+      result = await supabase.auth.signInWithPassword({ email, password });
+      if (result.error) {
+        const needsEmailConfirm = result.error.message.toLowerCase().includes('email not confirmed');
+        setAuthError(needsEmailConfirm
+          ? '注册成功，但 Supabase 仍开启邮箱验证，暂时不能直接登录。请关闭 Authentication > Providers > Email > Confirm email。'
+          : `注册成功，但自动登录失败：${result.error.message}`);
+        return;
+      }
+    }
+
+    if (!result.data.session) {
+      setAuthError('登录没有返回会话，请刷新后重试。');
+      return;
+    }
+
+    setSession(result.data.session);
+    const nextMessage = authMode === 'signup' ? '注册成功，已进入编辑器' : '登录成功';
     setCloudStatus(nextMessage);
     setAuthNotice(nextMessage);
   }
