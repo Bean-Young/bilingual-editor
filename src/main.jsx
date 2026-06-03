@@ -1305,7 +1305,7 @@ function App() {
     const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
     const nextPassiveText = side === 'source'
       ? (shouldSync ? mergeEditedSyncBlocks(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
-      : (shouldSync ? mergeEditedSyncBlocks(doc.targetText, value, doc.sourceText, 'target', settings) : doc.sourceText);
+      : doc.sourceText;
     if (options.pushUndo !== false) {
       pushUndoSnapshot();
     }
@@ -1325,9 +1325,7 @@ function App() {
         ...current,
         savedAt: null,
         targetText: value,
-        sourceText: shouldSync
-          ? mergeEditedSyncBlocks(current.targetText, value, current.sourceText, 'target', settings)
-          : current.sourceText,
+        sourceText: current.sourceText,
         lastEdited: 'target',
       };
     });
@@ -1342,7 +1340,7 @@ function App() {
     const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
     const nextPassiveText = side === 'source'
       ? (syncMode === 'auto' ? mergeEditedSyncBlocks(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
-      : (syncMode === 'auto' ? mergeEditedSyncBlocks(doc.targetText, value, doc.sourceText, 'target', settings) : doc.sourceText);
+      : doc.sourceText;
     setDoc((current) => {
       if (side === 'source') {
         return {
@@ -1357,9 +1355,7 @@ function App() {
       return {
         ...current,
         savedAt: null,
-        sourceText: syncMode === 'auto'
-          ? mergeEditedSyncBlocks(current.targetText, value, current.sourceText, 'target', settings)
-          : current.sourceText,
+        sourceText: current.sourceText,
         lastEdited: 'target',
       };
     });
