@@ -373,7 +373,7 @@ function App() {
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
   const [session, setSession] = useState(null);
   const [authMode, setAuthMode] = useState('signin');
-  const [authForm, setAuthForm] = useState({ email: '', password: '', displayName: '' });
+  const [authForm, setAuthForm] = useState({ email: '', password: '', displayName: DEFAULT_DISPLAY_NAME });
   const [authError, setAuthError] = useState('');
   const [authNotice, setAuthNotice] = useState('');
   const [cloudDocs, setCloudDocs] = useState([]);
@@ -1561,7 +1561,7 @@ function AuthScreen({ mode, form, error, notice, onModeChange, onFormChange, onS
               <input
                 value={form.displayName}
                 onChange={(event) => onFormChange({ ...form, displayName: event.target.value })}
-                placeholder="Yuezhe"
+                placeholder={DEFAULT_DISPLAY_NAME}
               />
             </label>
           )}
@@ -1590,7 +1590,14 @@ function AuthScreen({ mode, form, error, notice, onModeChange, onFormChange, onS
           <button type="submit">{isSignup ? '注册' : '登录'}</button>
         </form>
 
-        <button className="auth-switch" onClick={() => onModeChange(isSignup ? 'signin' : 'signup')}>
+        <button
+          className="auth-switch"
+          onClick={() => {
+            onModeChange(isSignup ? 'signin' : 'signup');
+            if (isSignup) return;
+            onFormChange({ ...form, displayName: form.displayName.trim() || DEFAULT_DISPLAY_NAME });
+          }}
+        >
           {isSignup ? '已有账号，去登录' : '没有账号，注册一个'}
         </button>
       </section>
