@@ -244,13 +244,36 @@ function localZhToEn(text) {
   });
 }
 
+function sanitizeEnglishTranslation(text) {
+  return preserveTexBlocks(text, (input) => input
+    .replace(/[，]/g, ', ')
+    .replace(/[。]/g, '.')
+    .replace(/[；]/g, '; ')
+    .replace(/[：]/g, ': ')
+    .replace(/[！？]/g, (match) => (match === '！' ? '!' : '?'))
+    .replace(/[、]/g, ', ')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[（）]/g, (match) => (match === '（' ? '(' : ')'))
+    .replace(/[和与及]/g, ' and ')
+    .replace(/[或]/g, ' or ')
+    .replace(/[的地得了着过于为]/g, ' ')
+    .replace(/[\u3400-\u9fff]+/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/([({[])\s+/g, '$1')
+    .replace(/\s+([)}\]])/g, '$1')
+    .replace(/\n[ \t]+/g, '\n')
+    .trim());
+}
+
 function translateText(text, targetLang, sourceLang = 'auto') {
   const resolvedTarget = targetLang === 'auto' ? inferTargetLanguage(text) : targetLang;
   const resolvedSource = sourceLang === 'auto' ? inferSourceLanguage(text) : sourceLang;
 
   if (resolvedTarget === 'zh-CN') return localEnToZh(text);
   if (resolvedTarget === 'zh-TW') return toTraditional(localEnToZh(text));
-  if (resolvedTarget === 'en') return localZhToEn(text);
+  if (resolvedTarget === 'en') return sanitizeEnglishTranslation(localZhToEn(text));
 
   const targetLabel = languageLabel(resolvedTarget);
   const base = resolvedSource.startsWith('zh') ? localZhToEn(text) : localEnToZh(text);
@@ -326,6 +349,80 @@ function translateForSync(text, side, settings, fallbackText) {
     return fallbackText;
   }
   return translateText(text, direction.targetLang, direction.sourceLang);
+}
+
+function segmentSyncBlocks(text) {
+  const value = String(text ?? '');
+  if (!value) return [];
+  const blocks = [];
+  const separatorPattern = /\n\s*\n+/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = separatorPattern.exec(value)) !== null) {
+    blocks.push({
+      text: value.slice(lastIndex, match.index),
+      separator: match[0],
+    });
+    lastIndex = match.index + match[0].length;
+  }
+
+  blocks.push({
+    text: value.slice(lastIndex),
+    separator: '',
+  });
+
+  return blocks.filter((block, index) => block.text || index === blocks.length - 1);
+}
+
+function mapUnchangedBlocks(previousBlocks, nextBlocks) {
+  const rowCount = previousBlocks.length + 1;
+  const colCount = nextBlocks.length + 1;
+  const table = Array.from({ length: rowCount }, () => Array(colCount).fill(0));
+
+  for (let row = previousBlocks.length - 1; row >= 0; row -= 1) {
+    for (let col = nextBlocks.length - 1; col >= 0; col -= 1) {
+      table[row][col] = previousBlocks[row].text === nextBlocks[col].text
+        ? table[row + 1][col + 1] + 1
+        : Math.max(table[row + 1][col], table[row][col + 1]);
+    }
+  }
+
+  const mapping = new Map();
+  let row = 0;
+  let col = 0;
+  while (row < previousBlocks.length && col < nextBlocks.length) {
+    if (previousBlocks[row].text === nextBlocks[col].text) {
+      mapping.set(col, row);
+      row += 1;
+      col += 1;
+    } else if (table[row + 1][col] >= table[row][col + 1]) {
+      row += 1;
+    } else {
+      col += 1;
+    }
+  }
+
+  return mapping;
+}
+
+function mergeEditedSyncBlocks(previousActiveText, nextActiveText, previousPassiveText, side, settings) {
+  if (previousActiveText === nextActiveText) return previousPassiveText;
+
+  const previousActiveBlocks = segmentSyncBlocks(previousActiveText);
+  const nextActiveBlocks = segmentSyncBlocks(nextActiveText);
+  const previousPassiveBlocks = segmentSyncBlocks(previousPassiveText);
+  const unchangedMap = mapUnchangedBlocks(previousActiveBlocks, nextActiveBlocks);
+
+  return nextActiveBlocks
+    .map((block, index) => {
+      const previousIndex = unchangedMap.get(index);
+      const passiveText = previousIndex === undefined
+        ? translateForSync(block.text, side, settings, '')
+        : previousPassiveBlocks[previousIndex]?.text ?? translateForSync(block.text, side, settings, '');
+      return `${passiveText}${block.separator}`;
+    })
+    .join('');
 }
 
 function resolvePaneLanguages(doc, settings) {
@@ -1016,7 +1113,9 @@ function App() {
           ...current,
           savedAt: null,
           sourceText: value,
-          targetText: syncMode === 'auto' ? translateForSync(value, 'source', settings, current.targetText) : current.targetText,
+          targetText: syncMode === 'auto'
+            ? mergeEditedSyncBlocks(current.sourceText, value, current.targetText, 'source', settings)
+            : current.targetText,
           lastEdited: 'source',
         };
       }
@@ -1024,7 +1123,9 @@ function App() {
         ...current,
         savedAt: null,
         targetText: value,
-        sourceText: syncMode === 'auto' ? translateForSync(value, 'target', settings, current.sourceText) : current.sourceText,
+        sourceText: syncMode === 'auto'
+          ? mergeEditedSyncBlocks(current.targetText, value, current.sourceText, 'target', settings)
+          : current.sourceText,
         lastEdited: 'target',
       };
     });
@@ -1125,15 +1226,6 @@ function App() {
     };
     setSettings(normalizedSettings);
     scheduleProfileSave(normalizedSettings);
-    pushUndoSnapshot();
-    setDoc((current) => {
-      if (syncMode !== 'auto') return current;
-      return {
-        ...current,
-        savedAt: null,
-        targetText: translateForSync(current.sourceText, 'source', normalizedSettings, current.targetText),
-      };
-    });
     setStatus('已更新设置');
   }
 
@@ -1155,13 +1247,7 @@ function App() {
       autoDetect: nextSettings.sourceLang === 'auto' && nextSettings.targetLang === 'auto',
     };
     setSettings(normalizedSettings);
-    pushUndoSnapshot();
-    setDoc((current) => ({
-      ...current,
-      savedAt: null,
-      targetText: translateForSync(current.sourceText, 'source', normalizedSettings, current.targetText),
-      lastEdited: 'source',
-    }));
+    scheduleProfileSave(normalizedSettings);
     setStatus('已互换翻译语言');
   }
 
@@ -1598,10 +1684,12 @@ function DocumentPane({
   onExportText,
 }) {
   const [viewMode, setViewMode] = useState('rendered');
+  const renderedRef = useRef(null);
   const inlineHighlights = buildInlineHighlights(commentHighlights, searchHighlights);
 
-  function updateRendered(event) {
-    const nextText = serializeRenderedDocument(event.currentTarget, format);
+  function commitRenderedEdit(element = renderedRef.current) {
+    if (!element || viewMode !== 'rendered') return;
+    const nextText = serializeRenderedDocument(element, format);
     if (nextText !== text.trim()) {
       onChange(nextText);
     }
@@ -1632,6 +1720,11 @@ function DocumentPane({
     }
   }
 
+  function switchViewMode(nextMode) {
+    commitRenderedEdit();
+    setViewMode(nextMode);
+  }
+
   return (
     <section className={classNames('editor-pane document-pane', active && 'active')} data-pane-side={side}>
       <div className="pane-header">
@@ -1642,8 +1735,8 @@ function DocumentPane({
         </div>
         <div className="pane-actions">
           <div className="view-toggle" aria-label={`${title}显示方式`}>
-            <button className={viewMode === 'raw' ? 'active' : ''} onClick={() => setViewMode('raw')}>原稿</button>
-            <button className={viewMode === 'rendered' ? 'active' : ''} onClick={() => setViewMode('rendered')}>渲染</button>
+            <button className={viewMode === 'raw' ? 'active' : ''} onMouseDown={() => commitRenderedEdit()} onClick={() => switchViewMode('raw')}>原稿</button>
+            <button className={viewMode === 'rendered' ? 'active' : ''} onMouseDown={() => commitRenderedEdit()} onClick={() => switchViewMode('rendered')}>渲染</button>
           </div>
           <button className="icon-action" title="导出文本" onClick={onExportText}><Download size={15} /></button>
         </div>
@@ -1667,6 +1760,7 @@ function DocumentPane({
         ) : (
           <RenderedDocument
             key={`${paneId}:${text}`}
+            ref={renderedRef}
             text={text}
             side={paneId}
             commentHighlights={commentHighlights}
@@ -1677,8 +1771,7 @@ function DocumentPane({
             onFocus={onFocus}
             onMouseUp={captureRenderedSelection}
             onKeyUp={captureRenderedSelection}
-            onInput={updateRendered}
-            onBlur={updateRendered}
+            onBlur={(event) => commitRenderedEdit(event.currentTarget)}
           />
         )}
       </div>
@@ -1899,7 +1992,7 @@ function SettingsPanel({ settings, cloudEnabled, displayName, profileStatus, onC
   );
 }
 
-function RenderedDocument({
+const RenderedDocument = React.forwardRef(function RenderedDocument({
   text,
   side,
   commentHighlights = [],
@@ -1908,9 +2001,8 @@ function RenderedDocument({
   searchRelatedBlockIndexes = new Set(),
   editable = false,
   onFocus,
-  onInput,
   onBlur,
-}) {
+}, ref) {
   const blocks = renderBlocks(text);
   let headingIndex = 0;
   const inlineHighlights = buildInlineHighlights(commentHighlights, searchHighlights);
@@ -1926,11 +2018,11 @@ function RenderedDocument({
   return (
     <div
       className="rendered-body document-rendered"
+      ref={ref}
       contentEditable={editable}
       suppressContentEditableWarning
       spellCheck
       onFocus={onFocus}
-      onInput={onInput}
       onBlur={onBlur}
       role={editable ? 'textbox' : undefined}
       aria-multiline={editable ? 'true' : undefined}
@@ -1958,7 +2050,7 @@ function RenderedDocument({
       })}
     </div>
   );
-}
+});
 
 function serializeRenderedDocument(root, format) {
   const blocks = Array.from(root.children)
