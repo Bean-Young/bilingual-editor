@@ -463,6 +463,22 @@ function changedBlockJobs(previousActiveText, nextActiveText, previousPassiveTex
   const previousActiveBlocks = segmentSyncBlocks(previousActiveText);
   const nextActiveBlocks = segmentSyncBlocks(nextActiveText);
   const previousPassiveBlocks = segmentSyncBlocks(previousPassiveText);
+  const insertion = pureInsertionChange(previousActiveText, nextActiveText, previousActiveBlocks);
+
+  if (insertion) {
+    const activeBlock = previousActiveBlocks[insertion.blockIndex] ?? { text: '' };
+    const passiveBlock = previousPassiveBlocks[insertion.blockIndex] ?? { text: '', separator: '\n\n' };
+    return [{
+      index: insertion.blockIndex,
+      previousText: activeBlock.text,
+      text: nextActiveBlocks[insertion.blockIndex]?.text ?? insertion.change.added,
+      reference: passiveBlock.text,
+      referenceSeparator: passiveBlock.separator,
+      paragraphInsertion: insertion.paragraphInsertion,
+      change: insertion.change,
+    }];
+  }
+
   const unchangedMap = mapUnchangedBlocks(previousActiveBlocks, nextActiveBlocks);
 
   return nextActiveBlocks
@@ -563,7 +579,9 @@ async function translateChangedBlocksWithLlm(jobs, side, settings, format) {
       const translatedPatch = restoreInlineProtectedSyntax(translations[batchIndex], protectedBatch[batchIndex].tokens).trim();
       const patch = translatedPatch || item.localPatch;
       if (!patch) return;
-      replacements.set(item.index, appendLocalPatch(item.reference, patch));
+      replacements.set(item.index, item.paragraphInsertion
+        ? insertParagraphPatch(item.reference, item.referenceSeparator, patch)
+        : appendLocalPatch(item.reference, patch));
     });
   }
 
@@ -597,7 +615,9 @@ function localRealtimePassiveText(previousActiveText, nextActiveText, previousPa
   jobs.forEach((job) => {
     const localPatch = localTranslateChangePatch(job.change, side, settings);
     if (localPatch === null) return;
-    replacements.set(job.index, appendLocalPatch(job.reference, localPatch));
+    replacements.set(job.index, job.paragraphInsertion
+      ? insertParagraphPatch(job.reference, job.referenceSeparator, localPatch)
+      : appendLocalPatch(job.reference, localPatch));
   });
 
   if (!replacements.size) return previousPassiveText;
@@ -619,6 +639,38 @@ function appendLocalPatch(text, patch) {
   if (!text.trim()) return patch;
   const spacer = /[\u3400-\u9fff]$/.test(text.trim()) || /^[\u3400-\u9fff]/.test(patch) ? '' : ' ';
   return `${text}${spacer}${patch}`;
+}
+
+function insertParagraphPatch(text, separator, patch) {
+  const cleanPatch = patch.trim();
+  if (!text.trim()) return cleanPatch;
+  const blockSeparator = separator && separator.trim() === '' ? separator : '\n\n';
+  return `${text}${blockSeparator}${cleanPatch}`;
+}
+
+function pureInsertionChange(previousText, nextText, previousBlocks = segmentSyncBlocks(previousText)) {
+  if (previousText === nextText) return null;
+  const change = diffTextChange(previousText, nextText);
+  if (!change.added.trim() || change.removed.trim()) return null;
+  const insertionOffset = change.prefix.length;
+  return {
+    change,
+    blockIndex: blockIndexAtOffset(previousText, previousBlocks, insertionOffset),
+    paragraphInsertion: /^\s*\n\s*\n/.test(change.added) || /\n\s*\n\s*$/.test(change.added),
+  };
+}
+
+function blockIndexAtOffset(text, blocks, offset) {
+  if (!blocks.length) return 0;
+  let cursor = 0;
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    const blockEnd = cursor + block.text.length;
+    const separatorEnd = blockEnd + block.separator.length;
+    if (offset <= separatorEnd) return index;
+    cursor = separatorEnd;
+  }
+  return blocks.length - 1;
 }
 
 function wouldDamagePassiveText(candidate, previousPassiveText, activeText, side, settings) {
@@ -1432,32 +1484,35 @@ function App() {
 
   function updateText(side, value, options = {}) {
     const shouldSync = options.sync !== false && syncMode === 'auto';
-    const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
-    const previousPassiveText = side === 'source' ? doc.targetText : doc.sourceText;
-    const nextPassiveText = side === 'source'
-      ? (shouldSync ? localRealtimePassiveText(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
-      : (shouldSync ? localRealtimePassiveText(doc.targetText, value, doc.sourceText, 'target', settings) : doc.sourceText);
+    const activeBaseText = side === 'source' ? doc.sourceText : doc.targetText;
+    const passiveBaseText = side === 'source' ? doc.targetText : doc.sourceText;
+    const previousActiveText = options.rendered ? serializeTextForRenderedEditing(activeBaseText, doc.format) : activeBaseText;
+    const previousPassiveText = options.rendered ? serializeTextForRenderedEditing(passiveBaseText, doc.format) : passiveBaseText;
     if (options.pushUndo !== false) {
       pushUndoSnapshot();
     }
     setDoc((current) => {
       if (side === 'source') {
+        const currentActive = options.rendered ? serializeTextForRenderedEditing(current.sourceText, current.format) : current.sourceText;
+        const currentPassive = options.rendered ? serializeTextForRenderedEditing(current.targetText, current.format) : current.targetText;
         return {
           ...current,
           savedAt: null,
           sourceText: value,
           targetText: shouldSync
-            ? localRealtimePassiveText(current.sourceText, value, current.targetText, 'source', settings)
+            ? localRealtimePassiveText(currentActive, value, currentPassive, 'source', settings)
             : current.targetText,
           lastEdited: 'source',
         };
       }
+      const currentActive = options.rendered ? serializeTextForRenderedEditing(current.targetText, current.format) : current.targetText;
+      const currentPassive = options.rendered ? serializeTextForRenderedEditing(current.sourceText, current.format) : current.sourceText;
       return {
         ...current,
         savedAt: null,
         targetText: value,
         sourceText: shouldSync
-          ? localRealtimePassiveText(current.targetText, value, current.sourceText, 'target', settings)
+          ? localRealtimePassiveText(currentActive, value, currentPassive, 'target', settings)
           : current.sourceText,
         lastEdited: 'target',
       };
@@ -1469,27 +1524,33 @@ function App() {
     setStatus(syncMode === 'auto' ? '已同步另一侧文档' : '已修改，自动同步暂停');
   }
 
-  function previewText(side, value) {
-    const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
-    const previousPassiveText = side === 'source' ? doc.targetText : doc.sourceText;
+  function previewText(side, value, options = {}) {
+    const activeBaseText = side === 'source' ? doc.sourceText : doc.targetText;
+    const passiveBaseText = side === 'source' ? doc.targetText : doc.sourceText;
+    const previousActiveText = options.rendered ? serializeTextForRenderedEditing(activeBaseText, doc.format) : activeBaseText;
+    const previousPassiveText = options.rendered ? serializeTextForRenderedEditing(passiveBaseText, doc.format) : passiveBaseText;
     setDoc((current) => {
       if (side === 'source') {
+        const currentActive = options.rendered ? serializeTextForRenderedEditing(current.sourceText, current.format) : current.sourceText;
+        const currentPassive = options.rendered ? serializeTextForRenderedEditing(current.targetText, current.format) : current.targetText;
         return {
           ...current,
           savedAt: null,
           sourceText: value,
           targetText: syncMode === 'auto'
-            ? localRealtimePassiveText(current.sourceText, value, current.targetText, 'source', settings)
+            ? localRealtimePassiveText(currentActive, value, currentPassive, 'source', settings)
             : current.targetText,
           lastEdited: 'source',
         };
       }
+      const currentActive = options.rendered ? serializeTextForRenderedEditing(current.targetText, current.format) : current.targetText;
+      const currentPassive = options.rendered ? serializeTextForRenderedEditing(current.sourceText, current.format) : current.sourceText;
       return {
         ...current,
         savedAt: null,
         targetText: value,
         sourceText: syncMode === 'auto'
-          ? localRealtimePassiveText(current.targetText, value, current.sourceText, 'target', settings)
+          ? localRealtimePassiveText(currentActive, value, currentPassive, 'target', settings)
           : current.sourceText,
         lastEdited: 'target',
       };
@@ -1951,7 +2012,7 @@ function App() {
               onFocus={() => setActiveSide('source')}
               onSelectionChange={(text, rect) => updateCommentSelection('source', text, rect)}
               onChange={(value, options) => updateText('source', value, options)}
-              onPreviewChange={(value) => previewText('source', value)}
+              onPreviewChange={(value, options) => previewText('source', value, options)}
               onExportText={() => exportText('source')}
             />
 
@@ -1976,7 +2037,7 @@ function App() {
               onFocus={() => setActiveSide('target')}
               onSelectionChange={(text, rect) => updateCommentSelection('target', text, rect)}
               onChange={(value, options) => updateText('target', value, options)}
-              onPreviewChange={(value) => previewText('target', value)}
+              onPreviewChange={(value, options) => previewText('target', value, options)}
               onExportText={() => exportText('target')}
             />
           </div>
@@ -2064,7 +2125,7 @@ function DocumentPane({
     const nextText = serializeRenderedDocument(element, format);
     renderedDirtyRef.current = false;
     if (nextText !== text.trim()) {
-      onChange(nextText, { sync: false });
+      onChange(nextText, { rendered: true });
     }
   }
 
@@ -2072,7 +2133,7 @@ function DocumentPane({
     renderedDirtyRef.current = true;
     const nextText = serializeRenderedDocument(event.currentTarget, format);
     if (nextText !== text.trim()) {
-      onPreviewChange(nextText);
+      onPreviewChange(nextText, { rendered: true });
     }
   }
 
@@ -2443,21 +2504,15 @@ function serializeRenderedDocument(root, format) {
       if (!text) return '';
 
       if (element.matches('h2')) {
-        if (format === 'tex') return `\\section{${text}}`;
-        if (format === 'md') return `# ${text}`;
-        return text;
+        return serializeRenderedBlock('h1', text, format);
       }
 
       if (element.matches('h3')) {
-        if (format === 'tex') return `\\subsection{${text}}`;
-        if (format === 'md') return `## ${text}`;
-        return text;
+        return serializeRenderedBlock('h2', text, format);
       }
 
       if (element.matches('pre')) {
-        if (format === 'tex') return `\\begin{equation}\n  ${text}\n\\end{equation}`;
-        if (format === 'md') return `$$\n${text}\n$$`;
-        return text;
+        return serializeRenderedBlock('equation', text, format);
       }
 
       return text;
@@ -2465,6 +2520,35 @@ function serializeRenderedDocument(root, format) {
     .filter(Boolean);
 
   return blocks.length ? blocks.join('\n\n') : root.innerText.trim();
+}
+
+function serializeTextForRenderedEditing(text, format) {
+  return renderBlocks(text)
+    .map((block) => serializeRenderedBlock(block.type, block.text, format))
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function serializeRenderedBlock(type, text, format) {
+  if (type === 'h1') {
+    if (format === 'tex') return `\\section{${text}}`;
+    if (format === 'md') return `# ${text}`;
+    return text;
+  }
+
+  if (type === 'h2') {
+    if (format === 'tex') return `\\subsection{${text}}`;
+    if (format === 'md') return `## ${text}`;
+    return text;
+  }
+
+  if (type === 'equation') {
+    if (format === 'tex') return `\\begin{equation}\n  ${text}\n\\end{equation}`;
+    if (format === 'md') return `$$\n${text}\n$$`;
+    return text;
+  }
+
+  return text;
 }
 
 function renderBlocks(text) {
