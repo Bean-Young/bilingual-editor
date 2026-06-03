@@ -19,6 +19,10 @@ const languageNames = {
 const TRANSLATION_SKILL_PROMPT = [
   'You are a bilingual document translation engine for an Overleaf-like editor.',
   'Translate directly and faithfully. Do not summarize, expand, explain, or add commentary.',
+  'Never polish, rewrite, or improve the language the user is actively editing. Only produce the corresponding text for the other language.',
+  'Follow the source document style: preserve register, sentence rhythm, terminology, hedging, punctuation style, and academic tone.',
+  'When previous target text is provided, perform a minimal-edit update on that previous target text: keep all still-correct wording unchanged and change only what is necessary to reflect the edited source.',
+  'Do not rephrase a whole paragraph just because a small phrase changed.',
   'Preserve the original document structure and formatting exactly where possible.',
   'For LaTeX: never translate command names, environment names, citation keys, labels, refs, file names, variables, or equations.',
   'Examples of protected LaTeX syntax: \\section, \\subsection, \\begin, \\end, \\cite{key}, \\ref{key}, \\label{key}, $...$ and equation environments.',
@@ -71,6 +75,19 @@ function validateChunks(chunks) {
   }
 }
 
+function validateReferences(references, chunks) {
+  if (references === undefined) return null;
+  if (!Array.isArray(references) || references.length !== chunks.length) {
+    throw new Error('referenceTranslations must match chunks length');
+  }
+  references.forEach((item) => {
+    if (item !== null && item !== undefined && typeof item !== 'string') {
+      throw new Error('each reference translation must be a string');
+    }
+  });
+  return references.map((item) => String(item ?? ''));
+}
+
 function extractJson(content) {
   const text = String(content ?? '').trim();
   try {
@@ -99,6 +116,7 @@ export default async function handler(req, res) {
     const body = normalizeBody(req.body);
     const chunks = body.chunks;
     validateChunks(chunks);
+    const referenceTranslations = validateReferences(body.referenceTranslations, chunks);
 
     const sourceLanguage = safeLanguageName(body.sourceLang);
     const targetLanguage = safeLanguageName(body.targetLang);
@@ -111,8 +129,14 @@ export default async function handler(req, res) {
       `Target language: ${targetLanguage}.`,
       `Document format: ${format}.`,
       'Translate each chunk independently. Keep paragraph breaks inside each chunk.',
-      'Input chunks JSON:',
-      JSON.stringify(chunks),
+      referenceTranslations
+        ? 'Previous target translations are provided. Update them minimally so they match the new source chunks.'
+        : 'No previous target translations are provided. Produce a direct translation from scratch.',
+      'Input JSON:',
+      JSON.stringify(chunks.map((chunk, index) => ({
+        source: chunk,
+        previousTarget: referenceTranslations?.[index] ?? null,
+      }))),
     ].join('\n');
 
     const response = await fetch(NVIDIA_CHAT_COMPLETIONS_URL, {

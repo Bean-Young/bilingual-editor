@@ -319,6 +319,7 @@ async function requestLlmTranslations(chunks, direction, options = {}) {
       targetLang: direction.targetLang,
       format: options.format,
       mode: options.mode,
+      referenceTranslations: options.referenceTranslations,
     }),
   });
 
@@ -441,13 +442,18 @@ function replaceSyncBlocks(text, replacements) {
     .join('');
 }
 
-async function translateChangedBlocksWithLlm(text, blockIndexes, side, settings, format) {
+async function translateChangedBlocksWithLlm(text, passiveText, blockIndexes, side, settings, format) {
   const direction = resolveSideDirection(text, side, settings);
   if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) return new Map();
 
   const blocks = segmentSyncBlocks(text);
+  const passiveBlocks = segmentSyncBlocks(passiveText);
   const workItems = [...new Set(blockIndexes)]
-    .map((index) => ({ index, text: blocks[index]?.text ?? '' }))
+    .map((index) => ({
+      index,
+      text: blocks[index]?.text ?? '',
+      reference: passiveBlocks[index]?.text ?? '',
+    }))
     .filter((item) => item.text.trim());
   const replacements = new Map();
 
@@ -466,7 +472,11 @@ async function translateChangedBlocksWithLlm(text, blockIndexes, side, settings,
     const translations = await requestLlmTranslations(
       batch.map((item) => item.text),
       direction,
-      { format, mode: 'refine' }
+      {
+        format,
+        mode: 'refine',
+        referenceTranslations: batch.map((item) => item.reference),
+      }
     );
 
     batch.forEach((item, batchIndex) => {
@@ -894,7 +904,7 @@ function App() {
     window.clearTimeout(llmTimerRef.current);
   }, []);
 
-  function queueLlmRefinement(side, activeText, previousActiveText, format, nextSettings = settings) {
+  function queueLlmRefinement(side, activeText, passiveText, previousActiveText, format, nextSettings = settings) {
     if (syncMode !== 'auto') return;
     const blockIndexes = changedBlockIndexes(previousActiveText, activeText);
     if (!blockIndexes.length) return;
@@ -902,6 +912,7 @@ function App() {
     pendingLlmRefinementRef.current = {
       side,
       activeText,
+      passiveText,
       blockIndexes,
       format,
       settings: { ...nextSettings },
@@ -921,6 +932,7 @@ function App() {
     try {
       const replacements = await translateChangedBlocksWithLlm(
         job.activeText,
+        job.passiveText,
         job.blockIndexes,
         job.side,
         job.settings,
@@ -1259,6 +1271,9 @@ function App() {
   function updateText(side, value, options = {}) {
     const shouldSync = options.sync !== false && syncMode === 'auto';
     const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
+    const nextPassiveText = side === 'source'
+      ? (shouldSync ? mergeEditedSyncBlocks(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
+      : (shouldSync ? mergeEditedSyncBlocks(doc.targetText, value, doc.sourceText, 'target', settings) : doc.sourceText);
     if (options.pushUndo !== false) {
       pushUndoSnapshot();
     }
@@ -1285,7 +1300,7 @@ function App() {
       };
     });
     if (shouldSync) {
-      queueLlmRefinement(side, value, previousActiveText, doc.format);
+      queueLlmRefinement(side, value, nextPassiveText, previousActiveText, doc.format);
     }
     setActiveSide(side);
     setStatus(syncMode === 'auto' ? '已同步另一侧文档' : '已修改，自动同步暂停');
@@ -1293,6 +1308,9 @@ function App() {
 
   function previewText(side, value) {
     const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
+    const nextPassiveText = side === 'source'
+      ? (syncMode === 'auto' ? mergeEditedSyncBlocks(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
+      : (syncMode === 'auto' ? mergeEditedSyncBlocks(doc.targetText, value, doc.sourceText, 'target', settings) : doc.sourceText);
     setDoc((current) => {
       if (side === 'source') {
         return {
@@ -1314,7 +1332,7 @@ function App() {
       };
     });
     if (syncMode === 'auto') {
-      queueLlmRefinement(side, value, previousActiveText, doc.format);
+      queueLlmRefinement(side, value, nextPassiveText, previousActiveText, doc.format);
     }
     setActiveSide(side);
   }
