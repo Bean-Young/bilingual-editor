@@ -22,6 +22,8 @@ const TRANSLATION_SKILL_PROMPT = [
   'Never polish, rewrite, or improve the language the user is actively editing. Only produce the corresponding text for the other language.',
   'Follow the source document style: preserve register, sentence rhythm, terminology, hedging, punctuation style, and academic tone.',
   'When previous target text is provided, perform a minimal-edit update on that previous target text: keep all still-correct wording unchanged and change only what is necessary to reflect the edited source.',
+  'For refinement requests, use originalSource, editedSource, editSummary, and previousTarget together. The editedSource is the user-edited paragraph; previousTarget is the other side before this edit.',
+  'Apply insertions, deletions, and replacements from editSummary to previousTarget with the smallest possible change.',
   'Do not rephrase a whole paragraph just because a small phrase changed.',
   'Preserve the original document structure and formatting exactly where possible.',
   'For LaTeX: never translate command names, environment names, citation keys, labels, refs, file names, variables, or equations.',
@@ -88,6 +90,19 @@ function validateReferences(references, chunks) {
   return references.map((item) => String(item ?? ''));
 }
 
+function validateOptionalStrings(values, chunks, name) {
+  if (values === undefined) return null;
+  if (!Array.isArray(values) || values.length !== chunks.length) {
+    throw new Error(`${name} must match chunks length`);
+  }
+  values.forEach((item) => {
+    if (item !== null && item !== undefined && typeof item !== 'string') {
+      throw new Error(`each ${name} item must be a string`);
+    }
+  });
+  return values.map((item) => String(item ?? ''));
+}
+
 function extractJson(content) {
   const text = String(content ?? '').trim();
   try {
@@ -117,6 +132,8 @@ export default async function handler(req, res) {
     const chunks = body.chunks;
     validateChunks(chunks);
     const referenceTranslations = validateReferences(body.referenceTranslations, chunks);
+    const originalChunks = validateOptionalStrings(body.originalChunks, chunks, 'originalChunks');
+    const changeSummaries = validateOptionalStrings(body.changeSummaries, chunks, 'changeSummaries');
 
     const sourceLanguage = safeLanguageName(body.sourceLang);
     const targetLanguage = safeLanguageName(body.targetLang);
@@ -134,7 +151,9 @@ export default async function handler(req, res) {
         : 'No previous target translations are provided. Produce a direct translation from scratch.',
       'Input JSON:',
       JSON.stringify(chunks.map((chunk, index) => ({
-        source: chunk,
+        originalSource: originalChunks?.[index] ?? null,
+        editedSource: chunk,
+        editSummary: changeSummaries?.[index] ?? null,
         previousTarget: referenceTranslations?.[index] ?? null,
       }))),
     ].join('\n');

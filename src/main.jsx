@@ -320,6 +320,8 @@ async function requestLlmTranslations(chunks, direction, options = {}) {
       format: options.format,
       mode: options.mode,
       referenceTranslations: options.referenceTranslations,
+      originalChunks: options.originalChunks,
+      changeSummaries: options.changeSummaries,
     }),
   });
 
@@ -457,6 +459,56 @@ function changedBlockIndexes(previousText, nextText) {
     .map(({ index }) => index);
 }
 
+function changedBlockJobs(previousActiveText, nextActiveText, previousPassiveText) {
+  const previousActiveBlocks = segmentSyncBlocks(previousActiveText);
+  const nextActiveBlocks = segmentSyncBlocks(nextActiveText);
+  const previousPassiveBlocks = segmentSyncBlocks(previousPassiveText);
+  const unchangedMap = mapUnchangedBlocks(previousActiveBlocks, nextActiveBlocks);
+
+  return nextActiveBlocks
+    .map((block, index) => {
+      if (!block.text.trim() || unchangedMap.has(index)) return null;
+      const previousBlock = previousActiveBlocks[index]?.text ?? '';
+      const previousPassiveBlock = previousPassiveBlocks[index]?.text ?? '';
+      const change = diffTextChange(previousBlock, block.text);
+      return {
+        index,
+        previousText: previousBlock,
+        text: block.text,
+        reference: previousPassiveBlock,
+        change,
+      };
+    })
+    .filter(Boolean);
+}
+
+function diffTextChange(previousText, nextText) {
+  let prefixLength = 0;
+  const maxPrefix = Math.min(previousText.length, nextText.length);
+  while (prefixLength < maxPrefix && previousText[prefixLength] === nextText[prefixLength]) {
+    prefixLength += 1;
+  }
+
+  let suffixLength = 0;
+  const maxSuffix = Math.min(previousText.length - prefixLength, nextText.length - prefixLength);
+  while (
+    suffixLength < maxSuffix
+    && previousText[previousText.length - 1 - suffixLength] === nextText[nextText.length - 1 - suffixLength]
+  ) {
+    suffixLength += 1;
+  }
+
+  const removed = previousText.slice(prefixLength, previousText.length - suffixLength);
+  const added = nextText.slice(prefixLength, nextText.length - suffixLength);
+  return {
+    prefix: previousText.slice(0, prefixLength),
+    suffix: previousText.slice(previousText.length - suffixLength),
+    removed,
+    added,
+    summary: `removed: ${JSON.stringify(removed)}; added: ${JSON.stringify(added)}`,
+  };
+}
+
 function replaceSyncBlocks(text, replacements) {
   const blocks = segmentSyncBlocks(text);
   return blocks
@@ -464,18 +516,11 @@ function replaceSyncBlocks(text, replacements) {
     .join('');
 }
 
-async function translateChangedBlocksWithLlm(text, passiveText, blockIndexes, side, settings, format) {
-  const direction = resolveSideDirection(text, side, settings);
+async function translateChangedBlocksWithLlm(jobs, side, settings, format) {
+  const direction = resolveSideDirection(jobs[0]?.text ?? '', side, settings);
   if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) return new Map();
 
-  const blocks = segmentSyncBlocks(text);
-  const passiveBlocks = segmentSyncBlocks(passiveText);
-  const workItems = [...new Set(blockIndexes)]
-    .map((index) => ({
-      index,
-      text: blocks[index]?.text ?? '',
-      reference: passiveBlocks[index]?.text ?? '',
-    }))
+  const workItems = jobs
     .filter((item) => item.text.trim() && !isProtectedMathBlock(item.text));
   const replacements = new Map();
 
@@ -499,6 +544,8 @@ async function translateChangedBlocksWithLlm(text, passiveText, blockIndexes, si
         format,
         mode: 'refine',
         referenceTranslations: batch.map((item) => item.reference),
+        originalChunks: batch.map((item) => item.previousText),
+        changeSummaries: batch.map((item) => item.change.summary),
       }
     );
 
@@ -530,8 +577,35 @@ function mergeEditedSyncBlocks(previousActiveText, nextActiveText, previousPassi
 }
 
 function localRealtimePassiveText(previousActiveText, nextActiveText, previousPassiveText, side, settings) {
-  const candidate = mergeEditedSyncBlocks(previousActiveText, nextActiveText, previousPassiveText, side, settings);
+  const jobs = changedBlockJobs(previousActiveText, nextActiveText, previousPassiveText);
+  if (!jobs.length) return previousPassiveText;
+  const replacements = new Map();
+
+  jobs.forEach((job) => {
+    const localPatch = localTranslateChangePatch(job.change, side, settings);
+    if (localPatch === null) return;
+    replacements.set(job.index, appendLocalPatch(job.reference, localPatch));
+  });
+
+  if (!replacements.size) return previousPassiveText;
+  const candidate = replaceSyncBlocks(previousPassiveText, replacements);
   return wouldDamagePassiveText(candidate, previousPassiveText, nextActiveText, side, settings) ? previousPassiveText : candidate;
+}
+
+function localTranslateChangePatch(change, side, settings) {
+  const added = change.added.trim();
+  if (!added || change.removed.trim()) return null;
+  const direction = resolveSideDirection(added, side, settings);
+  if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) return null;
+  const translated = translateText(added, direction.targetLang, direction.sourceLang).trim();
+  if (!translated || translated === added) return null;
+  return translated;
+}
+
+function appendLocalPatch(text, patch) {
+  if (!text.trim()) return patch;
+  const spacer = /[\u3400-\u9fff]$/.test(text.trim()) || /^[\u3400-\u9fff]/.test(patch) ? '' : ' ';
+  return `${text}${spacer}${patch}`;
 }
 
 function wouldDamagePassiveText(candidate, previousPassiveText, activeText, side, settings) {
@@ -1005,14 +1079,14 @@ function App() {
 
   function queueLlmRefinement(side, activeText, passiveText, previousActiveText, format, nextSettings = settings) {
     if (syncMode !== 'auto') return;
-    const blockIndexes = changedBlockIndexes(previousActiveText, activeText);
-    if (!blockIndexes.length) return;
+    const jobs = changedBlockJobs(previousActiveText, activeText, passiveText);
+    if (!jobs.length) return;
 
     pendingLlmRefinementRef.current = {
       side,
       activeText,
       passiveText,
-      blockIndexes,
+      jobs,
       format,
       settings: { ...nextSettings },
     };
@@ -1030,9 +1104,7 @@ function App() {
 
     try {
       const replacements = await translateChangedBlocksWithLlm(
-        job.activeText,
-        job.passiveText,
-        job.blockIndexes,
+        job.jobs,
         job.side,
         job.settings,
         job.format
@@ -1348,6 +1420,7 @@ function App() {
   function updateText(side, value, options = {}) {
     const shouldSync = options.sync !== false && syncMode === 'auto';
     const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
+    const previousPassiveText = side === 'source' ? doc.targetText : doc.sourceText;
     const nextPassiveText = side === 'source'
       ? (shouldSync ? localRealtimePassiveText(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
       : (shouldSync ? localRealtimePassiveText(doc.targetText, value, doc.sourceText, 'target', settings) : doc.sourceText);
@@ -1377,7 +1450,7 @@ function App() {
       };
     });
     if (shouldSync) {
-      queueLlmRefinement(side, value, nextPassiveText, previousActiveText, doc.format);
+      queueLlmRefinement(side, value, previousPassiveText, previousActiveText, doc.format);
     }
     setActiveSide(side);
     setStatus(syncMode === 'auto' ? '已同步另一侧文档' : '已修改，自动同步暂停');
@@ -1385,6 +1458,7 @@ function App() {
 
   function previewText(side, value) {
     const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
+    const previousPassiveText = side === 'source' ? doc.targetText : doc.sourceText;
     const nextPassiveText = side === 'source'
       ? (syncMode === 'auto' ? localRealtimePassiveText(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
       : (syncMode === 'auto' ? localRealtimePassiveText(doc.targetText, value, doc.sourceText, 'target', settings) : doc.sourceText);
@@ -1409,7 +1483,7 @@ function App() {
       };
     });
     if (syncMode === 'auto') {
-      queueLlmRefinement(side, value, nextPassiveText, previousActiveText, doc.format);
+      queueLlmRefinement(side, value, previousPassiveText, previousActiveText, doc.format);
     }
     setActiveSide(side);
   }
