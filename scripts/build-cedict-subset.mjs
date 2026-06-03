@@ -132,12 +132,12 @@ const zhEntries = [...zhToEn.entries()]
 const singleWordEnEntries = [...enCandidates.values()]
   .filter(({ source }) => wordCount(source) === 1)
   .sort((a, b) => b.score - a.score || a.source.length - b.source.length)
-  .slice(0, 2500);
+  .slice(0, 30000);
 
 const phraseEnEntries = [...enCandidates.values()]
   .filter(({ source }) => wordCount(source) > 1)
   .sort((a, b) => b.score - a.score || a.source.length - b.source.length)
-  .slice(0, 5500);
+  .slice(0, 50000);
 
 const enEntries = [...singleWordEnEntries, ...phraseEnEntries]
   .map(({ source, target }) => ({ source, target }))

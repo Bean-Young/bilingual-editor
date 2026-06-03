@@ -24,6 +24,8 @@ const TRANSLATION_SKILL_PROMPT = [
   'When previous target text is provided, perform a minimal-edit update on that previous target text: keep all still-correct wording unchanged and change only what is necessary to reflect the edited source.',
   'For refinement requests, use originalSource, editedSource, editSummary, and previousTarget together. The editedSource is the user-edited paragraph; previousTarget is the other side before this edit.',
   'Apply insertions, deletions, and replacements from editSummary to previousTarget with the smallest possible change.',
+  'If editSummary contains added source-language text, translate that added text into the target language before inserting it into previousTarget.',
+  'Do not copy newly added source-language words into the target text unless they are protected code, math, citations, labels, URLs, identifiers, or proper nouns that should remain unchanged.',
   'Do not rephrase a whole paragraph just because a small phrase changed.',
   'Preserve the original document structure and formatting exactly where possible.',
   'For LaTeX: never translate command names, environment names, citation keys, labels, refs, file names, variables, or equations.',

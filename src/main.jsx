@@ -42,7 +42,7 @@ This editor shows the whole source document and the whole Chinese version side b
   p(y \mid x) = \prod_{t=1}^{T} p(y_t \mid y_{<t}, x)
 \end{equation}`;
 
-const enToZhTerms = buildTermList([...ECDICT_EN_TO_ZH_TERMS, ...PUBLIC_EN_TO_ZH_TERMS], 'en');
+const enToZhTerms = buildTermList([...PUBLIC_EN_TO_ZH_TERMS, ...ECDICT_EN_TO_ZH_TERMS], 'en');
 const zhToEnTerms = buildTermList(PUBLIC_ZH_TO_EN_TERMS, 'zh');
 
 const LANGUAGES = [
