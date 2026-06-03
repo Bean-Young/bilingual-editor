@@ -290,6 +290,16 @@ function oppositeLanguage(language) {
   return language.startsWith('zh') ? 'en' : 'zh-CN';
 }
 
+function languageGroup(language) {
+  if (language === 'auto') return 'auto';
+  if (language.startsWith('zh')) return 'zh';
+  return language;
+}
+
+function sameLanguageGroup(left, right) {
+  return languageGroup(left) === languageGroup(right);
+}
+
 function resolveDirection(text, settings) {
   return resolveSideDirection(text, 'source', settings);
 }
@@ -307,18 +317,15 @@ function resolveSideDirection(text, side, settings) {
 }
 
 function resolveInputLanguage(text, configuredLanguage) {
-  const signal = languageSignal(text);
-  if (configuredLanguage === 'auto') return signal.language;
+  return configuredLanguage === 'auto' ? languageSignal(text).language : configuredLanguage;
+}
 
-  if (configuredLanguage === 'en' && signal.language.startsWith('zh') && signal.cjkCount >= 2) {
-    return signal.language;
+function translateForSync(text, side, settings, fallbackText) {
+  const direction = resolveSideDirection(text, side, settings);
+  if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) {
+    return fallbackText;
   }
-
-  if (configuredLanguage.startsWith('zh') && signal.language === 'en' && signal.latinWordCount >= 2) {
-    return signal.language;
-  }
-
-  return configuredLanguage;
+  return translateText(text, direction.targetLang, direction.sourceLang);
 }
 
 function resolvePaneLanguages(doc, settings) {
@@ -986,11 +993,7 @@ function App() {
       format,
       savedAt: null,
       sourceText: rawText,
-      targetText: translateText(
-        rawText,
-        resolveSideDirection(rawText, 'source', settings).targetLang,
-        resolveSideDirection(rawText, 'source', settings).sourceLang
-      ),
+      targetText: translateForSync(rawText, 'source', settings, ''),
       lastEdited: null,
       comments: [],
     };
@@ -1009,21 +1012,19 @@ function App() {
     pushUndoSnapshot();
     setDoc((current) => {
       if (side === 'source') {
-        const direction = resolveSideDirection(value, 'source', settings);
         return {
           ...current,
           savedAt: null,
           sourceText: value,
-          targetText: syncMode === 'auto' ? translateText(value, direction.targetLang, direction.sourceLang) : current.targetText,
+          targetText: syncMode === 'auto' ? translateForSync(value, 'source', settings, current.targetText) : current.targetText,
           lastEdited: 'source',
         };
       }
-      const direction = resolveSideDirection(value, 'target', settings);
       return {
         ...current,
         savedAt: null,
         targetText: value,
-        sourceText: syncMode === 'auto' ? translateText(value, direction.targetLang, direction.sourceLang) : current.sourceText,
+        sourceText: syncMode === 'auto' ? translateForSync(value, 'target', settings, current.sourceText) : current.sourceText,
         lastEdited: 'target',
       };
     });
@@ -1107,10 +1108,10 @@ function App() {
       ...current,
       savedAt: null,
       targetText: direction === 'source'
-        ? translateText(current.sourceText, resolveSideDirection(current.sourceText, 'source', settings).targetLang, resolveSideDirection(current.sourceText, 'source', settings).sourceLang)
+        ? translateForSync(current.sourceText, 'source', settings, current.targetText)
         : current.targetText,
       sourceText: direction === 'target'
-        ? translateText(current.targetText, resolveSideDirection(current.targetText, 'target', settings).targetLang, resolveSideDirection(current.targetText, 'target', settings).sourceLang)
+        ? translateForSync(current.targetText, 'target', settings, current.sourceText)
         : current.sourceText,
       lastEdited: direction,
     }));
@@ -1127,11 +1128,10 @@ function App() {
     pushUndoSnapshot();
     setDoc((current) => {
       if (syncMode !== 'auto') return current;
-      const direction = resolveSideDirection(current.sourceText, 'source', normalizedSettings);
       return {
         ...current,
         savedAt: null,
-        targetText: translateText(current.sourceText, direction.targetLang, direction.sourceLang),
+        targetText: translateForSync(current.sourceText, 'source', normalizedSettings, current.targetText),
       };
     });
     setStatus('已更新设置');
@@ -1159,11 +1159,7 @@ function App() {
     setDoc((current) => ({
       ...current,
       savedAt: null,
-      targetText: translateText(
-        current.sourceText,
-        resolveSideDirection(current.sourceText, 'source', normalizedSettings).targetLang,
-        resolveSideDirection(current.sourceText, 'source', normalizedSettings).sourceLang
-      ),
+      targetText: translateForSync(current.sourceText, 'source', normalizedSettings, current.targetText),
       lastEdited: 'source',
     }));
     setStatus('已互换翻译语言');
@@ -1681,6 +1677,7 @@ function DocumentPane({
             onFocus={onFocus}
             onMouseUp={captureRenderedSelection}
             onKeyUp={captureRenderedSelection}
+            onInput={updateRendered}
             onBlur={updateRendered}
           />
         )}
@@ -1911,6 +1908,7 @@ function RenderedDocument({
   searchRelatedBlockIndexes = new Set(),
   editable = false,
   onFocus,
+  onInput,
   onBlur,
 }) {
   const blocks = renderBlocks(text);
@@ -1932,6 +1930,7 @@ function RenderedDocument({
       suppressContentEditableWarning
       spellCheck
       onFocus={onFocus}
+      onInput={onInput}
       onBlur={onBlur}
       role={editable ? 'textbox' : undefined}
       aria-multiline={editable ? 'true' : undefined}
@@ -2379,4 +2378,7 @@ function legacyCommentSide(comment, activeSide) {
   };
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+const rootElement = document.getElementById('root');
+const appRoot = rootElement.__bilingualEditorRoot ?? createRoot(rootElement);
+rootElement.__bilingualEditorRoot = appRoot;
+appRoot.render(<App />);
