@@ -506,6 +506,28 @@ function mergeEditedSyncBlocks(previousActiveText, nextActiveText, previousPassi
     .join('');
 }
 
+function localRealtimePassiveText(previousActiveText, nextActiveText, previousPassiveText, side, settings) {
+  const candidate = mergeEditedSyncBlocks(previousActiveText, nextActiveText, previousPassiveText, side, settings);
+  return wouldDamagePassiveText(candidate, previousPassiveText, nextActiveText, side, settings) ? previousPassiveText : candidate;
+}
+
+function wouldDamagePassiveText(candidate, previousPassiveText, activeText, side, settings) {
+  if (side !== 'target') return false;
+  const direction = resolveSideDirection(activeText, side, settings);
+  if (direction.targetLang !== 'en') return false;
+
+  const previousLetters = (previousPassiveText.match(/[A-Za-z]/g) ?? []).length;
+  if (previousLetters < 40) return false;
+
+  const candidateLetters = (candidate.match(/[A-Za-z]/g) ?? []).length;
+  const candidateWords = candidate.match(/[A-Za-z]{2,}/g) ?? [];
+  const punctuationFragments = (candidate.match(/(^|\n)\s*[,.;:!?]/g) ?? []).length;
+
+  return candidateLetters < previousLetters * 0.45
+    || candidateWords.length < 4
+    || punctuationFragments >= 2;
+}
+
 function resolvePaneLanguages(doc, settings) {
   const sourceDirection = resolveSideDirection(doc.sourceText, 'source', settings);
   const targetDirection = resolveSideDirection(doc.targetText, 'target', settings);
@@ -1304,8 +1326,8 @@ function App() {
     const shouldSync = options.sync !== false && syncMode === 'auto';
     const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
     const nextPassiveText = side === 'source'
-      ? (shouldSync ? mergeEditedSyncBlocks(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
-      : doc.sourceText;
+      ? (shouldSync ? localRealtimePassiveText(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
+      : (shouldSync ? localRealtimePassiveText(doc.targetText, value, doc.sourceText, 'target', settings) : doc.sourceText);
     if (options.pushUndo !== false) {
       pushUndoSnapshot();
     }
@@ -1316,7 +1338,7 @@ function App() {
           savedAt: null,
           sourceText: value,
           targetText: shouldSync
-            ? mergeEditedSyncBlocks(current.sourceText, value, current.targetText, 'source', settings)
+            ? localRealtimePassiveText(current.sourceText, value, current.targetText, 'source', settings)
             : current.targetText,
           lastEdited: 'source',
         };
@@ -1325,7 +1347,9 @@ function App() {
         ...current,
         savedAt: null,
         targetText: value,
-        sourceText: current.sourceText,
+        sourceText: shouldSync
+          ? localRealtimePassiveText(current.targetText, value, current.sourceText, 'target', settings)
+          : current.sourceText,
         lastEdited: 'target',
       };
     });
@@ -1339,15 +1363,15 @@ function App() {
   function previewText(side, value) {
     const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
     const nextPassiveText = side === 'source'
-      ? (syncMode === 'auto' ? mergeEditedSyncBlocks(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
-      : doc.sourceText;
+      ? (syncMode === 'auto' ? localRealtimePassiveText(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
+      : (syncMode === 'auto' ? localRealtimePassiveText(doc.targetText, value, doc.sourceText, 'target', settings) : doc.sourceText);
     setDoc((current) => {
       if (side === 'source') {
         return {
           ...current,
           savedAt: null,
           targetText: syncMode === 'auto'
-            ? mergeEditedSyncBlocks(current.sourceText, value, current.targetText, 'source', settings)
+            ? localRealtimePassiveText(current.sourceText, value, current.targetText, 'source', settings)
             : current.targetText,
           lastEdited: 'source',
         };
@@ -1355,7 +1379,9 @@ function App() {
       return {
         ...current,
         savedAt: null,
-        sourceText: current.sourceText,
+        sourceText: syncMode === 'auto'
+          ? localRealtimePassiveText(current.targetText, value, current.sourceText, 'target', settings)
+          : current.sourceText,
         lastEdited: 'target',
       };
     });
