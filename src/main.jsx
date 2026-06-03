@@ -71,7 +71,11 @@ const dictionary = [
   ['scientific writing', '科学写作'],
   ['data analysis', '数据分析'],
   ['code generation', '代码生成'],
+  ['practical interface', '实用接口'],
+  ['user interface', '用户界面'],
+  ['interface', '接口'],
   ['Researchers', '研究人员'],
+  ['researchers', '研究人员'],
   ['reliable way', '可靠方式'],
   ['English source', '英文原稿'],
   ['Chinese version', '中文版本'],
@@ -87,8 +91,45 @@ const dictionary = [
   ['equation', '公式'],
   ['comments', '批注'],
   ['attached', '绑定'],
+  ['version', '版本'],
+  ['writing', '写作'],
+  ['generation', '生成'],
+  ['revision', '修订'],
+  ['analysis', '分析'],
+  ['practical', '实用'],
+  ['reliable', '可靠'],
+  ['whole', '完整'],
+  ['middle', '中间'],
+  ['divider', '分隔条'],
+  ['panes', '面板'],
+  ['pane', '面板'],
   ['Introduction', '引言'],
   ['Motivation', '研究动机'],
+];
+
+const basicEnglishRules = [
+  [/\bhave become\b/gi, '已经成为'],
+  [/\bhas become\b/gi, '已经成为'],
+  [/\bstill need\b/gi, '仍然需要'],
+  [/\bneed\b/gi, '需要'],
+  [/\bneeds\b/gi, '需要'],
+  [/\bto keep\b/gi, '保持'],
+  [/\bkeep\b/gi, '保持'],
+  [/\bduring\b/gi, '在'],
+  [/\bfor\b/gi, '用于'],
+  [/\bwith\b/gi, '用'],
+  [/\band\b/gi, '和'],
+  [/\bor\b/gi, '或'],
+  [/\bthe\b/gi, ''],
+  [/\ba\b/gi, ''],
+  [/\ban\b/gi, ''],
+  [/\bThis\b/g, '这个'],
+  [/\bthis\b/g, '这个'],
+  [/\bcan be dragged\b/gi, '可以拖动'],
+  [/\bto resize both panes\b/gi, '来调整两侧大小'],
+  [/\bside by side\b/gi, '并排'],
+  [/\bshows\b/gi, '显示'],
+  [/\bshow\b/gi, '显示'],
 ];
 
 const reverseDictionary = dictionary.map(([en, zh]) => [zh, en]);
@@ -224,17 +265,28 @@ function applyChineseTerms(text, terms) {
     .trim();
 }
 
+function applyBasicEnglishRules(text) {
+  return basicEnglishRules.reduce(
+    (output, [pattern, replacement]) => output.replace(pattern, replacement),
+    text
+  );
+}
+
+function normalizeChineseDraft(text) {
+  return text
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s+([,.;:!?，。；：！？])/g, '$1')
+    .replace(/([，。；：！？])\s+/g, '$1')
+    .replace(/([\u3400-\u9fff])\s+([\u3400-\u9fff])/g, '$1$2')
+    .trim();
+}
+
 function localEnToZh(text) {
   return preserveTexBlocks(text, (input) => {
     let output = input;
     output = applyEnglishTerms(output, enToZhTerms);
-    return output
-      .replace(/\bhas become\b/gi, '已经成为')
-      .replace(/\bstill need\b/gi, '仍然需要')
-      .replace(/\bshows\b/gi, '显示')
-      .replace(/\bside by side\b/gi, '并排')
-      .replace(/\bcan be dragged\b/gi, '可以拖动')
-      .replace(/\bto resize both panes\b/gi, '来调整两侧大小');
+    output = applyBasicEnglishRules(output);
+    return normalizeChineseDraft(output);
   });
 }
 
