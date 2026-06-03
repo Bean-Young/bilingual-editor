@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import { isSupabaseConfigured, supabase } from './supabaseClient';
+import { ECDICT_EN_TO_ZH_TERMS } from './translation/publicEcdictTerms';
 import { PUBLIC_EN_TO_ZH_TERMS, PUBLIC_ZH_TO_EN_TERMS } from './translation/publicZhEnTerms';
 import './styles.css';
 
@@ -41,61 +42,8 @@ This editor shows the whole source document and the whole Chinese version side b
   p(y \mid x) = \prod_{t=1}^{T} p(y_t \mid y_{<t}, x)
 \end{equation}`;
 
-const dictionary = [
-  ['Large language models', '大语言模型'],
-  ['language models', '语言模型'],
-  ['artificial intelligence', '人工智能'],
-  ['machine learning', '机器学习'],
-  ['deep learning', '深度学习'],
-  ['computer vision', '计算机视觉'],
-  ['medical imaging', '医学影像'],
-  ['medical image', '医学图像'],
-  ['image segmentation', '图像分割'],
-  ['lesion segmentation', '病灶分割'],
-  ['object detection', '目标检测'],
-  ['image classification', '图像分类'],
-  ['semantic segmentation', '语义分割'],
-  ['domain shift', '域偏移'],
-  ['test-time adaptation', '测试时自适应'],
-  ['breast ultrasound', '乳腺超声'],
-  ['ultrasound image', '超声图像'],
-  ['ablation study', '消融实验'],
-  ['experimental results', '实验结果'],
-  ['performance evaluation', '性能评估'],
-  ['state-of-the-art', '最先进'],
-  ['segmentation', '分割'],
-  ['classification', '分类'],
-  ['analysis', '分析'],
-  ['image', '图像'],
-  ['medical', '医学'],
-  ['scientific writing', '科学写作'],
-  ['data analysis', '数据分析'],
-  ['code generation', '代码生成'],
-  ['Researchers', '研究人员'],
-  ['reliable way', '可靠方式'],
-  ['English source', '英文原稿'],
-  ['Chinese version', '中文版本'],
-  ['Chinese translation', '中文译文'],
-  ['translation', '译文'],
-  ['aligned', '对齐'],
-  ['revision', '修订'],
-  ['editor', '编辑器'],
-  ['document', '文档'],
-  ['source', '原稿'],
-  ['paragraph', '段落'],
-  ['heading', '标题'],
-  ['equation', '公式'],
-  ['comments', '批注'],
-  ['attached', '绑定'],
-  ['Introduction', '引言'],
-  ['Motivation', '研究动机'],
-];
-
-const reverseDictionary = dictionary.map(([en, zh]) => [zh, en]);
-const appEnToZhTerms = dictionary.map(([source, target]) => ({ source, target }));
-const appZhToEnTerms = reverseDictionary.map(([source, target]) => ({ source, target }));
-const enToZhTerms = buildTermList([...appEnToZhTerms, ...PUBLIC_EN_TO_ZH_TERMS], 'en');
-const zhToEnTerms = buildTermList([...appZhToEnTerms, ...PUBLIC_ZH_TO_EN_TERMS], 'zh');
+const enToZhTerms = buildTermList([...ECDICT_EN_TO_ZH_TERMS, ...PUBLIC_EN_TO_ZH_TERMS], 'en');
+const zhToEnTerms = buildTermList(PUBLIC_ZH_TO_EN_TERMS, 'zh');
 
 const LANGUAGES = [
   { code: 'auto', label: '智能识别', short: '自动' },

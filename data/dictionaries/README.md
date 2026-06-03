@@ -13,3 +13,19 @@ The frontend term subset in `src/translation/publicZhEnTerms.js` is generated fr
 ```bash
 node scripts/build-cedict-subset.mjs
 ```
+
+## ECDICT
+
+`ecdict.csv` is the English-Chinese dictionary database from ECDICT.
+
+- Source: https://github.com/skywind3000/ECDICT
+- License: MIT
+
+The full CSV is intentionally ignored by git because it is large. Download it before regenerating the frontend subset:
+
+```bash
+curl -L https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.csv -o data/dictionaries/ecdict.csv
+node scripts/build-ecdict-subset.mjs
+```
+
+The generated frontend subset is stored in `src/translation/publicEcdictTerms.js`.
