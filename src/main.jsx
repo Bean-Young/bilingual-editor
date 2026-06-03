@@ -341,7 +341,7 @@ async function translateDocumentWithLlm(text, side, settings, format, mode = 'im
   const translatedBlocks = blocks.map((block) => ({ ...block }));
   const queue = blocks
     .map((block, index) => ({ index, text: block.text }))
-    .filter((block) => block.text.trim());
+    .filter((block) => block.text.trim() && !isProtectedMathBlock(block.text));
 
   let cursor = 0;
   while (cursor < queue.length) {
@@ -355,18 +355,40 @@ async function translateDocumentWithLlm(text, side, settings, format, mode = 'im
       cursor += 1;
     }
 
+    const protectedBatch = batch.map((item) => maskInlineProtectedSyntax(item.text));
     const translations = await requestLlmTranslations(
-      batch.map((item) => item.text),
+      protectedBatch.map((item) => item.text),
       direction,
       { format, mode }
     );
 
     batch.forEach((item, batchIndex) => {
-      translatedBlocks[item.index].text = translations[batchIndex];
+      translatedBlocks[item.index].text = restoreInlineProtectedSyntax(translations[batchIndex], protectedBatch[batchIndex].tokens);
     });
   }
 
   return translatedBlocks.map((block) => `${block.text}${block.separator}`).join('');
+}
+
+function isProtectedMathBlock(text) {
+  const value = text.trim();
+  return /^\\begin\{(?:equation|align|align\*|gather|gather\*|multline|multline\*)\}[\s\S]*\\end\{(?:equation|align|align\*|gather|gather\*|multline|multline\*)\}$/.test(value)
+    || /^\$\$[\s\S]*\$\$$/.test(value)
+    || /^\\\[[\s\S]*\\]$/.test(value);
+}
+
+function maskInlineProtectedSyntax(text) {
+  const tokens = [];
+  const masked = text.replace(/(\$[^$\n]+\$|\\\([^)]*\\\)|\\(?:cite|citep|citet|ref|eqref|autoref|cref|label)\*?(?:\[[^\]]*])?(?:\{[^}]*\})+)/g, (match) => {
+    const token = `__PROTECTED_${tokens.length}__`;
+    tokens.push(match);
+    return token;
+  });
+  return { text: masked, tokens };
+}
+
+function restoreInlineProtectedSyntax(text, tokens) {
+  return tokens.reduce((output, token, index) => output.replaceAll(`__PROTECTED_${index}__`, token), text);
 }
 
 function segmentSyncBlocks(text) {
@@ -454,7 +476,7 @@ async function translateChangedBlocksWithLlm(text, passiveText, blockIndexes, si
       text: blocks[index]?.text ?? '',
       reference: passiveBlocks[index]?.text ?? '',
     }))
-    .filter((item) => item.text.trim());
+    .filter((item) => item.text.trim() && !isProtectedMathBlock(item.text));
   const replacements = new Map();
 
   let cursor = 0;
@@ -469,8 +491,9 @@ async function translateChangedBlocksWithLlm(text, passiveText, blockIndexes, si
       cursor += 1;
     }
 
+    const protectedBatch = batch.map((item) => maskInlineProtectedSyntax(item.text));
     const translations = await requestLlmTranslations(
-      batch.map((item) => item.text),
+      protectedBatch.map((item) => item.text),
       direction,
       {
         format,
@@ -480,7 +503,7 @@ async function translateChangedBlocksWithLlm(text, passiveText, blockIndexes, si
     );
 
     batch.forEach((item, batchIndex) => {
-      replacements.set(item.index, translations[batchIndex]);
+      replacements.set(item.index, restoreInlineProtectedSyntax(translations[batchIndex], protectedBatch[batchIndex].tokens));
     });
   }
 

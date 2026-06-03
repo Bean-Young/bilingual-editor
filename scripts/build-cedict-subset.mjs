@@ -100,7 +100,8 @@ for (const rawLine of raw.split('\n')) {
 
   const cleanDefinitions = definitions
     .split('/')
-    .map(normalizeDefinition)
+    .flatMap((definition) => normalizeDefinition(definition).split(/\s*;\s*/))
+    .map((definition) => definition.trim())
     .filter((definition) => definition && !noisyPatterns.some((pattern) => pattern.test(definition)));
 
   const firstDefinition = cleanDefinitions.find(isUsefulEnglishTerm);
@@ -126,7 +127,7 @@ for (const rawLine of raw.split('\n')) {
 const zhEntries = [...zhToEn.entries()]
   .map(([source, target]) => ({ source, target }))
   .sort((a, b) => b.source.length - a.source.length || a.source.localeCompare(b.source, 'zh-Hans-CN'))
-  .slice(0, 4000);
+  .slice(0, 100000);
 
 const singleWordEnEntries = [...enCandidates.values()]
   .filter(({ source }) => wordCount(source) === 1)
