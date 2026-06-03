@@ -257,22 +257,58 @@ function translateText(text, targetLang, sourceLang = 'auto') {
 }
 
 function inferSourceLanguage(text) {
-  return /[\u3400-\u9fff]/.test(text) ? 'zh-CN' : 'en';
+  const cleaned = String(text ?? '')
+    .replace(/\\begin\{[\s\S]*?\\end\{[^}]+}/g, ' ')
+    .replace(/\$[^$]*\$/g, ' ')
+    .replace(/\\[a-zA-Z]+/g, ' ');
+  const cjkCount = (cleaned.match(/[\u3400-\u9fff]/g) ?? []).length;
+  const latinWords = cleaned.match(/[A-Za-z]{2,}/g) ?? [];
+
+  if (cjkCount === 0) return 'en';
+  if (latinWords.length === 0) return 'zh-CN';
+  return cjkCount >= Math.max(2, latinWords.length) ? 'zh-CN' : 'en';
 }
 
 function inferTargetLanguage(text) {
-  return inferSourceLanguage(text).startsWith('zh') ? 'en' : 'zh-CN';
+  return oppositeLanguage(inferSourceLanguage(text));
+}
+
+function oppositeLanguage(language) {
+  return language.startsWith('zh') ? 'en' : 'zh-CN';
 }
 
 function resolveDirection(text, settings) {
-  const sourceLang = settings.sourceLang === 'auto' ? inferSourceLanguage(text) : settings.sourceLang;
-  const targetLang = settings.targetLang === 'auto'
-    ? (sourceLang.startsWith('zh') ? 'en' : 'zh-CN')
-    : settings.targetLang;
+  return resolveSideDirection(text, 'source', settings);
+}
+
+function resolveSideDirection(text, side, settings) {
+  const activeSetting = side === 'source' ? settings.sourceLang : settings.targetLang;
+  const passiveSetting = side === 'source' ? settings.targetLang : settings.sourceLang;
+  const sourceLang = activeSetting === 'auto' ? inferSourceLanguage(text) : activeSetting;
+  const targetLang = passiveSetting === 'auto' ? oppositeLanguage(sourceLang) : passiveSetting;
 
   return {
     sourceLang,
     targetLang,
+  };
+}
+
+function resolvePaneLanguages(doc, settings) {
+  const sourceDirection = resolveSideDirection(doc.sourceText, 'source', settings);
+  const targetDirection = resolveSideDirection(doc.targetText, 'target', settings);
+
+  if (doc.lastEdited === 'target') {
+    return {
+      source: settings.sourceLang === 'auto' ? targetDirection.targetLang : settings.sourceLang,
+      target: settings.targetLang === 'auto' ? targetDirection.sourceLang : settings.targetLang,
+    };
+  }
+
+  return {
+    source: settings.sourceLang === 'auto'
+      ? (doc.sourceText.trim() ? inferSourceLanguage(doc.sourceText) : sourceDirection.sourceLang)
+      : settings.sourceLang,
+    target: settings.targetLang === 'auto' ? sourceDirection.targetLang : settings.targetLang,
   };
 }
 
@@ -467,6 +503,7 @@ function App() {
       unresolved,
     };
   }, [doc]);
+  const paneLanguages = useMemo(() => resolvePaneLanguages(doc, settings), [doc, settings]);
 
   const visibleComments = doc.comments;
   const currentUser = session?.user ?? null;
@@ -921,7 +958,11 @@ function App() {
       format,
       savedAt: null,
       sourceText: rawText,
-      targetText: translateText(rawText, resolveDirection(rawText, settings).targetLang, resolveDirection(rawText, settings).sourceLang),
+      targetText: translateText(
+        rawText,
+        resolveSideDirection(rawText, 'source', settings).targetLang,
+        resolveSideDirection(rawText, 'source', settings).sourceLang
+      ),
       lastEdited: null,
       comments: [],
     };
@@ -940,7 +981,7 @@ function App() {
     pushUndoSnapshot();
     setDoc((current) => {
       if (side === 'source') {
-        const direction = resolveDirection(value, settings);
+        const direction = resolveSideDirection(value, 'source', settings);
         return {
           ...current,
           savedAt: null,
@@ -949,7 +990,7 @@ function App() {
           lastEdited: 'source',
         };
       }
-      const direction = resolveDirection(value, settings);
+      const direction = resolveSideDirection(value, 'target', settings);
       return {
         ...current,
         savedAt: null,
@@ -1038,10 +1079,10 @@ function App() {
       ...current,
       savedAt: null,
       targetText: direction === 'source'
-        ? translateText(current.sourceText, resolveDirection(current.sourceText, settings).targetLang, resolveDirection(current.sourceText, settings).sourceLang)
+        ? translateText(current.sourceText, resolveSideDirection(current.sourceText, 'source', settings).targetLang, resolveSideDirection(current.sourceText, 'source', settings).sourceLang)
         : current.targetText,
       sourceText: direction === 'target'
-        ? translateText(current.targetText, resolveDirection(current.targetText, settings).targetLang, resolveDirection(current.targetText, settings).sourceLang)
+        ? translateText(current.targetText, resolveSideDirection(current.targetText, 'target', settings).targetLang, resolveSideDirection(current.targetText, 'target', settings).sourceLang)
         : current.sourceText,
       lastEdited: direction,
     }));
@@ -1058,7 +1099,7 @@ function App() {
     pushUndoSnapshot();
     setDoc((current) => {
       if (syncMode !== 'auto') return current;
-      const direction = resolveDirection(current.sourceText, normalizedSettings);
+      const direction = resolveSideDirection(current.sourceText, 'source', normalizedSettings);
       return {
         ...current,
         savedAt: null,
@@ -1092,8 +1133,8 @@ function App() {
       savedAt: null,
       targetText: translateText(
         current.sourceText,
-        resolveDirection(current.sourceText, normalizedSettings).targetLang,
-        resolveDirection(current.sourceText, normalizedSettings).sourceLang
+        resolveSideDirection(current.sourceText, 'source', normalizedSettings).targetLang,
+        resolveSideDirection(current.sourceText, 'source', normalizedSettings).sourceLang
       ),
       lastEdited: 'source',
     }));
@@ -1404,8 +1445,8 @@ function App() {
         </header>
 
         <section className="document-stats">
-          <div><strong>{stats.sourceChars}</strong><span>英文字符</span></div>
-          <div><strong>{stats.targetChars}</strong><span>中文字符</span></div>
+          <div><strong>{stats.sourceChars}</strong><span>{languageShort(paneLanguages.source)}字符</span></div>
+          <div><strong>{stats.targetChars}</strong><span>{languageShort(paneLanguages.target)}字符</span></div>
           <div><strong>{stats.unresolved}</strong><span>未解决批注</span></div>
           <div><strong>{syncMode === 'auto' ? '开启' : '暂停'}</strong><span>联动状态</span></div>
         </section>
@@ -1425,7 +1466,7 @@ function App() {
               format={doc.format}
               active={activeSide === 'source'}
               dirty={doc.lastEdited === 'source'}
-              languageLabelText={languageLabel(resolveDirection(doc.sourceText, settings).sourceLang)}
+              languageLabelText={languageLabel(paneLanguages.source)}
               commentHighlights={sourceCommentHighlights}
               searchHighlights={searchState.source.terms}
               searchMatchBlockIndexes={searchState.source.matchBlockIndexes}
@@ -1449,7 +1490,7 @@ function App() {
               format={doc.format}
               active={activeSide === 'target'}
               dirty={doc.lastEdited === 'target'}
-              languageLabelText={languageLabel(resolveDirection(doc.sourceText, settings).targetLang)}
+              languageLabelText={languageLabel(paneLanguages.target)}
               commentHighlights={targetCommentHighlights}
               searchHighlights={searchState.target.terms}
               searchMatchBlockIndexes={searchState.target.matchBlockIndexes}
