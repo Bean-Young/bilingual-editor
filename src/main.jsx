@@ -695,7 +695,7 @@ function App() {
       return;
     }
 
-    const nextMessage = authMode === 'signup' && !result.data.session ? '已发送验证邮件，请先完成邮箱验证。' : '登录成功';
+    const nextMessage = authMode === 'signup' ? '注册成功，已登录' : '登录成功';
     setCloudStatus(nextMessage);
     setAuthNotice(nextMessage);
   }
