@@ -1,8 +1,13 @@
+import { ECDICT_EN_TO_ZH_TERMS } from '../src/translation/publicEcdictTerms.js';
+import { PUBLIC_EN_TO_ZH_TERMS, PUBLIC_ZH_TO_EN_TERMS } from '../src/translation/publicZhEnTerms.js';
+
 const NVIDIA_CHAT_COMPLETIONS_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const DEFAULT_MODEL = 'moonshotai/kimi-k2.6';
 const MAX_CHUNKS = 24;
 const MAX_CHUNK_CHARS = 12000;
 const MAX_TOTAL_CHARS = 80000;
+const enToZhTerms = buildTermList([...PUBLIC_EN_TO_ZH_TERMS, ...ECDICT_EN_TO_ZH_TERMS], 'en');
+const zhToEnTerms = buildTermList(PUBLIC_ZH_TO_EN_TERMS, 'zh');
 
 const languageNames = {
   auto: 'auto detected',
@@ -116,6 +121,83 @@ function extractJson(content) {
   }
 }
 
+function buildTermList(entries, language) {
+  const seen = new Set();
+  return entries
+    .filter(({ source, target }) => source && target && source !== target)
+    .filter(({ source }) => {
+      const key = language === 'en' ? source.toLowerCase() : source;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => b.source.length - a.source.length || a.source.localeCompare(b.source));
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function applyEnglishTerms(text, terms) {
+  const lowerText = text.toLowerCase();
+  let output = text;
+
+  terms.forEach(({ source, target }) => {
+    if (!source || !target || !lowerText.includes(source.toLowerCase())) return;
+    const pattern = new RegExp(`(^|[^A-Za-z0-9])(${escapeRegExp(source)})(?=$|[^A-Za-z0-9])`, 'gi');
+    output = output.replace(pattern, (match, prefix) => `${prefix}${target}`);
+  });
+
+  return output;
+}
+
+function applyChineseTerms(text, terms) {
+  let output = text;
+  terms.forEach(({ source, target }) => {
+    if (source && target && output.includes(source)) {
+      output = output.replaceAll(source, ` ${target} `);
+    }
+  });
+  return output
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s+([,.;:!?，。；：！？])/g, '$1')
+    .trim();
+}
+
+function localTranslateInsertedText(text, sourceLang, targetLang) {
+  const clean = String(text ?? '').trim();
+  if (!clean) return '';
+  if (targetLang === 'zh-CN' || targetLang === 'zh-TW') return applyEnglishTerms(clean, enToZhTerms).trim();
+  if (targetLang === 'en') return applyChineseTerms(clean, zhToEnTerms).trim();
+  return clean;
+}
+
+function parseAddedText(summary) {
+  const match = String(summary ?? '').match(/added:\s*("(?:\\.|[^"\\])*")/);
+  if (!match) return '';
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return '';
+  }
+}
+
+function enforceInsertedTextLanguage(output, addedText, sourceLang, targetLang) {
+  const cleanAdded = String(addedText ?? '').trim();
+  if (!cleanAdded) return output;
+  const translatedAdded = localTranslateInsertedText(cleanAdded, sourceLang, targetLang);
+  if (!translatedAdded || translatedAdded === cleanAdded) return output;
+
+  const pattern = sourceLang === 'en'
+    ? new RegExp(`(^|[^A-Za-z0-9])(${escapeRegExp(cleanAdded)})(?=$|[^A-Za-z0-9])`, 'gi')
+    : new RegExp(escapeRegExp(cleanAdded), 'g');
+
+  return output.replace(pattern, (...args) => {
+    const prefix = sourceLang === 'en' ? args[1] : '';
+    return `${prefix}${translatedAdded}`;
+  });
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -194,8 +276,15 @@ export default async function handler(req, res) {
       throw new Error('model returned an invalid translations array');
     }
 
+    const translations = parsed.translations.map((item, index) => enforceInsertedTextLanguage(
+      String(item ?? ''),
+      parseAddedText(changeSummaries?.[index]),
+      body.sourceLang,
+      body.targetLang
+    ));
+
     res.status(200).json({
-      translations: parsed.translations.map((item) => String(item ?? '')),
+      translations,
       usage: payload.usage ?? null,
     });
   } catch (error) {
