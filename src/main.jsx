@@ -1685,14 +1685,21 @@ function DocumentPane({
 }) {
   const [viewMode, setViewMode] = useState('rendered');
   const renderedRef = useRef(null);
+  const renderedDirtyRef = useRef(false);
   const inlineHighlights = buildInlineHighlights(commentHighlights, searchHighlights);
 
   function commitRenderedEdit(element = renderedRef.current) {
     if (!element || viewMode !== 'rendered') return;
+    if (!renderedDirtyRef.current) return;
     const nextText = serializeRenderedDocument(element, format);
+    renderedDirtyRef.current = false;
     if (nextText !== text.trim()) {
       onChange(nextText);
     }
+  }
+
+  function markRenderedDirty() {
+    renderedDirtyRef.current = true;
   }
 
   function captureRenderedSelection() {
@@ -1769,6 +1776,7 @@ function DocumentPane({
             searchRelatedBlockIndexes={searchRelatedBlockIndexes}
             editable={active}
             onFocus={onFocus}
+            onInput={markRenderedDirty}
             onMouseUp={captureRenderedSelection}
             onKeyUp={captureRenderedSelection}
             onBlur={(event) => commitRenderedEdit(event.currentTarget)}
@@ -2001,6 +2009,7 @@ const RenderedDocument = React.forwardRef(function RenderedDocument({
   searchRelatedBlockIndexes = new Set(),
   editable = false,
   onFocus,
+  onInput,
   onBlur,
 }, ref) {
   const blocks = renderBlocks(text);
@@ -2023,6 +2032,7 @@ const RenderedDocument = React.forwardRef(function RenderedDocument({
       suppressContentEditableWarning
       spellCheck
       onFocus={onFocus}
+      onInput={onInput}
       onBlur={onBlur}
       role={editable ? 'textbox' : undefined}
       aria-multiline={editable ? 'true' : undefined}
