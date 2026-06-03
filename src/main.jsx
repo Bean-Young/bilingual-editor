@@ -122,7 +122,16 @@ function preserveTexBlocks(text, transform) {
     blocks.push(match);
     return key;
   });
-  let result = transform(masked);
+  const commandNames = [];
+  const commandMasked = masked.replace(/\\[A-Za-z]+\*?/g, (match) => {
+    const key = `__TEXCMD_${commandNames.length}__`;
+    commandNames.push(match);
+    return key;
+  });
+  let result = transform(commandMasked);
+  commandNames.forEach((command, index) => {
+    result = result.replaceAll(`__TEXCMD_${index}__`, command);
+  });
   blocks.forEach((block, index) => {
     result = result.replace(`__TEX_${index}__`, block);
   });
