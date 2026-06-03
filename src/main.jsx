@@ -168,7 +168,8 @@ const traditionalMap = {
 
 function preserveTexBlocks(text, transform) {
   const blocks = [];
-  const masked = text.replace(/(\\begin\{[\s\S]*?\\end\{[^}]+\}|\\[a-zA-Z]+(?:\{[^}]*\})?|\$[^$]*\$)/g, (match) => {
+  const protectedTexPattern = /(\\begin\{[\s\S]*?\\end\{[^}]+\}|\$[^$]*\$|\\(?:cite|citep|citet|ref|eqref|autoref|cref|label|url|href|includegraphics|bibliography|bibliographystyle)(?:\[[^\]]*])?(?:\{[^}]*\})+)/g;
+  const masked = text.replace(protectedTexPattern, (match) => {
     const key = `__TEX_${blocks.length}__`;
     blocks.push(match);
     return key;
@@ -257,6 +258,10 @@ function translateText(text, targetLang, sourceLang = 'auto') {
 }
 
 function inferSourceLanguage(text) {
+  return languageSignal(text).language;
+}
+
+function languageSignal(text) {
   const cleaned = String(text ?? '')
     .replace(/\\begin\{[\s\S]*?\\end\{[^}]+}/g, ' ')
     .replace(/\$[^$]*\$/g, ' ')
@@ -264,9 +269,17 @@ function inferSourceLanguage(text) {
   const cjkCount = (cleaned.match(/[\u3400-\u9fff]/g) ?? []).length;
   const latinWords = cleaned.match(/[A-Za-z]{2,}/g) ?? [];
 
-  if (cjkCount === 0) return 'en';
-  if (latinWords.length === 0) return 'zh-CN';
-  return cjkCount >= Math.max(2, latinWords.length) ? 'zh-CN' : 'en';
+  if (cjkCount === 0) {
+    return { language: 'en', cjkCount, latinWordCount: latinWords.length };
+  }
+  if (latinWords.length === 0) {
+    return { language: 'zh-CN', cjkCount, latinWordCount: latinWords.length };
+  }
+  return {
+    language: cjkCount >= Math.max(2, latinWords.length) ? 'zh-CN' : 'en',
+    cjkCount,
+    latinWordCount: latinWords.length,
+  };
 }
 
 function inferTargetLanguage(text) {
@@ -284,13 +297,28 @@ function resolveDirection(text, settings) {
 function resolveSideDirection(text, side, settings) {
   const activeSetting = side === 'source' ? settings.sourceLang : settings.targetLang;
   const passiveSetting = side === 'source' ? settings.targetLang : settings.sourceLang;
-  const sourceLang = activeSetting === 'auto' ? inferSourceLanguage(text) : activeSetting;
+  const sourceLang = resolveInputLanguage(text, activeSetting);
   const targetLang = passiveSetting === 'auto' ? oppositeLanguage(sourceLang) : passiveSetting;
 
   return {
     sourceLang,
     targetLang,
   };
+}
+
+function resolveInputLanguage(text, configuredLanguage) {
+  const signal = languageSignal(text);
+  if (configuredLanguage === 'auto') return signal.language;
+
+  if (configuredLanguage === 'en' && signal.language.startsWith('zh') && signal.cjkCount >= 2) {
+    return signal.language;
+  }
+
+  if (configuredLanguage.startsWith('zh') && signal.language === 'en' && signal.latinWordCount >= 2) {
+    return signal.language;
+  }
+
+  return configuredLanguage;
 }
 
 function resolvePaneLanguages(doc, settings) {
@@ -1578,7 +1606,7 @@ function DocumentPane({
 
   function updateRendered(event) {
     const nextText = serializeRenderedDocument(event.currentTarget, format);
-    if (nextText && nextText !== text.trim()) {
+    if (nextText !== text.trim()) {
       onChange(nextText);
     }
   }
@@ -1601,6 +1629,13 @@ function DocumentPane({
     );
   }
 
+  function preparePaneFocus() {
+    const activePane = document.activeElement?.closest?.('[data-pane-side]');
+    if (activePane && activePane.getAttribute('data-pane-side') !== side) {
+      document.activeElement.blur();
+    }
+  }
+
   return (
     <section className={classNames('editor-pane document-pane', active && 'active')} data-pane-side={side}>
       <div className="pane-header">
@@ -1618,7 +1653,7 @@ function DocumentPane({
         </div>
       </div>
 
-      <div className="document-surface" onClick={onFocus}>
+      <div className="document-surface" onMouseDownCapture={() => { preparePaneFocus(); onFocus(); }} onClick={onFocus}>
         {viewMode === 'raw' ? (
           <div className="raw-editor-stack">
             <pre className="raw-highlight-layer" aria-hidden="true">{renderHighlightedText(text || ' ', inlineHighlights)}</pre>
@@ -1635,13 +1670,14 @@ function DocumentPane({
           </div>
         ) : (
           <RenderedDocument
+            key={`${paneId}:${text}`}
             text={text}
             side={paneId}
             commentHighlights={commentHighlights}
             searchHighlights={searchHighlights}
             searchMatchBlockIndexes={searchMatchBlockIndexes}
             searchRelatedBlockIndexes={searchRelatedBlockIndexes}
-            editable
+            editable={active}
             onFocus={onFocus}
             onMouseUp={captureRenderedSelection}
             onKeyUp={captureRenderedSelection}
