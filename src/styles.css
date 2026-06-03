@@ -1047,6 +1047,29 @@ button:disabled {
   color: inherit;
 }
 
+.search-highlight {
+  padding: 1px 2px;
+  border-radius: 3px;
+  background: #cfe5ff;
+  box-shadow: inset 0 -1px 0 #5e9ee8;
+  color: #10253f;
+}
+
+.search-match-block,
+.search-related-block {
+  transition: background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.document-rendered .search-match-block {
+  background: #eef6ff;
+  box-shadow: -10px 0 0 #7bb7ff;
+}
+
+.document-rendered .search-related-block {
+  background: #f4f9ff;
+  box-shadow: -10px 0 0 #b8d8ff;
+}
+
 .comment-button {
   display: inline-flex;
   align-items: center;

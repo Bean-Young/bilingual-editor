@@ -1103,9 +1103,11 @@ function App() {
   }
 
   const outline = extractOutline(doc.sourceText);
-  const matchCount = search.trim()
-    ? [doc.sourceText, doc.targetText].filter((text) => text.toLowerCase().includes(search.trim().toLowerCase())).length
-    : null;
+  const searchState = useMemo(
+    () => getSearchState(doc.sourceText, doc.targetText, search),
+    [doc.sourceText, doc.targetText, search]
+  );
+  const matchCount = searchState.query ? searchState.totalMatches : null;
   const sourceCommentHighlights = getCommentHighlights(visibleComments, 'source', draftComment);
   const targetCommentHighlights = getCommentHighlights(visibleComments, 'target', draftComment);
 
@@ -1359,6 +1361,9 @@ function App() {
               dirty={doc.lastEdited === 'source'}
               languageLabelText={languageLabel(resolveDirection(doc.sourceText, settings).sourceLang)}
               commentHighlights={sourceCommentHighlights}
+              searchHighlights={searchState.source.terms}
+              searchMatchBlockIndexes={searchState.source.matchBlockIndexes}
+              searchRelatedBlockIndexes={searchState.source.relatedBlockIndexes}
               onFocus={() => setActiveSide('source')}
               onSelectionChange={(text, rect) => updateCommentSelection('source', text, rect)}
               onChange={(value) => updateText('source', value)}
@@ -1380,6 +1385,9 @@ function App() {
               dirty={doc.lastEdited === 'target'}
               languageLabelText={languageLabel(resolveDirection(doc.sourceText, settings).targetLang)}
               commentHighlights={targetCommentHighlights}
+              searchHighlights={searchState.target.terms}
+              searchMatchBlockIndexes={searchState.target.matchBlockIndexes}
+              searchRelatedBlockIndexes={searchState.target.relatedBlockIndexes}
               onFocus={() => setActiveSide('target')}
               onSelectionChange={(text, rect) => updateCommentSelection('target', text, rect)}
               onChange={(value) => updateText('target', value)}
@@ -1439,7 +1447,25 @@ function scrollToHeading(id) {
     ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function DocumentPane({ title, side, paneId, format, icon, text, active, dirty, languageLabelText, commentHighlights, onFocus, onSelectionChange, onChange, onExportText }) {
+function DocumentPane({
+  title,
+  side,
+  paneId,
+  format,
+  icon,
+  text,
+  active,
+  dirty,
+  languageLabelText,
+  commentHighlights,
+  searchHighlights,
+  searchMatchBlockIndexes,
+  searchRelatedBlockIndexes,
+  onFocus,
+  onSelectionChange,
+  onChange,
+  onExportText,
+}) {
   const [viewMode, setViewMode] = useState('rendered');
 
   function updateRendered(event) {
@@ -1501,6 +1527,9 @@ function DocumentPane({ title, side, paneId, format, icon, text, active, dirty, 
             text={text}
             side={paneId}
             commentHighlights={commentHighlights}
+            searchHighlights={searchHighlights}
+            searchMatchBlockIndexes={searchMatchBlockIndexes}
+            searchRelatedBlockIndexes={searchRelatedBlockIndexes}
             editable
             onFocus={onFocus}
             onMouseUp={captureRenderedSelection}
@@ -1722,9 +1751,29 @@ function SettingsPanel({ settings, cloudEnabled, displayName, profileStatus, onC
   );
 }
 
-function RenderedDocument({ text, side, commentHighlights = [], editable = false, onFocus, onBlur }) {
+function RenderedDocument({
+  text,
+  side,
+  commentHighlights = [],
+  searchHighlights = [],
+  searchMatchBlockIndexes = new Set(),
+  searchRelatedBlockIndexes = new Set(),
+  editable = false,
+  onFocus,
+  onBlur,
+}) {
   const blocks = renderBlocks(text);
   let headingIndex = 0;
+  const inlineHighlights = buildInlineHighlights(commentHighlights, searchHighlights);
+
+  function blockClassName(index, baseClassName) {
+    return classNames(
+      baseClassName,
+      searchMatchBlockIndexes.has(index) && 'search-match-block',
+      searchRelatedBlockIndexes.has(index) && 'search-related-block'
+    );
+  }
+
   return (
     <div
       className="rendered-body document-rendered"
@@ -1739,15 +1788,23 @@ function RenderedDocument({ text, side, commentHighlights = [], editable = false
       {blocks.map((block, index) => {
         if (block.type === 'h1') {
           headingIndex += 1;
-          return <h2 key={index} data-side={side} data-heading-id={`heading-${headingIndex}`}>{renderInline(block.text, commentHighlights)}</h2>;
+          return (
+            <h2 key={index} className={blockClassName(index)} data-side={side} data-heading-id={`heading-${headingIndex}`}>
+              {renderInline(block.text, inlineHighlights)}
+            </h2>
+          );
         }
         if (block.type === 'h2') {
           headingIndex += 1;
-          return <h3 key={index} data-side={side} data-heading-id={`heading-${headingIndex}`}>{renderInline(block.text, commentHighlights)}</h3>;
+          return (
+            <h3 key={index} className={blockClassName(index)} data-side={side} data-heading-id={`heading-${headingIndex}`}>
+              {renderInline(block.text, inlineHighlights)}
+            </h3>
+          );
         }
-        if (block.type === 'equation') return <pre key={index} className="rendered-equation">{block.text}</pre>;
-        if (block.type === 'list') return <p key={index} className="rendered-list">{renderInline(block.text, commentHighlights)}</p>;
-        return <p key={index}>{renderInline(block.text, commentHighlights)}</p>;
+        if (block.type === 'equation') return <pre key={index} className={blockClassName(index, 'rendered-equation')}>{block.text}</pre>;
+        if (block.type === 'list') return <p key={index} className={blockClassName(index, 'rendered-list')}>{renderInline(block.text, inlineHighlights)}</p>;
+        return <p key={index} className={blockClassName(index)}>{renderInline(block.text, inlineHighlights)}</p>;
       })}
     </div>
   );
@@ -1843,6 +1900,112 @@ function renderBlocks(text) {
   return blocks.length ? blocks : [{ type: 'p', text: cleaned }];
 }
 
+function getSearchState(sourceText, targetText, rawQuery) {
+  const query = rawQuery.trim();
+  if (!query) {
+    return {
+      query: '',
+      totalMatches: 0,
+      source: emptySearchSide(),
+      target: emptySearchSide(),
+    };
+  }
+
+  const sourceTerms = buildSearchTerms(query, 'source');
+  const targetTerms = buildSearchTerms(query, 'target');
+  const sourceBlocks = renderBlocks(sourceText);
+  const targetBlocks = renderBlocks(targetText);
+  const sourceMatchBlockIndexes = blockIndexesMatchingTerms(sourceBlocks, sourceTerms);
+  const targetMatchBlockIndexes = blockIndexesMatchingTerms(targetBlocks, targetTerms);
+  const sourceRelatedBlockIndexes = matchingIndexSet(targetMatchBlockIndexes, sourceBlocks.length);
+  const targetRelatedBlockIndexes = matchingIndexSet(sourceMatchBlockIndexes, targetBlocks.length);
+
+  sourceMatchBlockIndexes.forEach((index) => sourceRelatedBlockIndexes.delete(index));
+  targetMatchBlockIndexes.forEach((index) => targetRelatedBlockIndexes.delete(index));
+
+  return {
+    query,
+    totalMatches: countSearchMatches(sourceText, sourceTerms) + countSearchMatches(targetText, targetTerms),
+    source: {
+      terms: sourceTerms,
+      matchBlockIndexes: sourceMatchBlockIndexes,
+      relatedBlockIndexes: sourceRelatedBlockIndexes,
+    },
+    target: {
+      terms: targetTerms,
+      matchBlockIndexes: targetMatchBlockIndexes,
+      relatedBlockIndexes: targetRelatedBlockIndexes,
+    },
+  };
+}
+
+function emptySearchSide() {
+  return {
+    terms: [],
+    matchBlockIndexes: new Set(),
+    relatedBlockIndexes: new Set(),
+  };
+}
+
+function buildSearchTerms(query, side) {
+  const paired = side === 'source' ? localZhToEn(query) : localEnToZh(query);
+  const traditional = side === 'target' ? toTraditional(paired) : paired;
+  return uniqueSearchTerms([query, paired, traditional])
+    .sort((a, b) => b.length - a.length);
+}
+
+function uniqueSearchTerms(terms) {
+  const seen = new Set();
+  return terms
+    .map((term) => term.trim())
+    .filter((term) => term.length > 0)
+    .filter((term) => {
+      const key = term.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function blockIndexesMatchingTerms(blocks, terms) {
+  const indexes = new Set();
+  if (!terms.length) return indexes;
+  blocks.forEach((block, index) => {
+    if (terms.some((term) => includesIgnoreCase(block.text, term))) {
+      indexes.add(index);
+    }
+  });
+  return indexes;
+}
+
+function matchingIndexSet(sourceIndexes, maxSize) {
+  const related = new Set();
+  sourceIndexes.forEach((index) => {
+    if (index < maxSize) related.add(index);
+  });
+  return related;
+}
+
+function countSearchMatches(text, terms) {
+  let total = 0;
+  const lowerText = text.toLowerCase();
+  terms.forEach((term) => {
+    const lowerTerm = term.toLowerCase();
+    let cursor = 0;
+    while (lowerTerm && cursor < lowerText.length) {
+      const index = lowerText.indexOf(lowerTerm, cursor);
+      if (index === -1) break;
+      total += 1;
+      cursor = index + lowerTerm.length;
+    }
+  });
+  return total;
+}
+
+function includesIgnoreCase(text, term) {
+  return text.toLowerCase().includes(term.toLowerCase());
+}
+
 function extractOutline(text) {
   let headingIndex = 0;
   return text
@@ -1896,6 +2059,13 @@ function getCommentHighlights(comments, side, draft) {
     .sort((a, b) => b.length - a.length);
 }
 
+function buildInlineHighlights(commentHighlights, searchHighlights) {
+  return [
+    ...commentHighlights.map((text) => ({ text, className: 'comment-highlight' })),
+    ...searchHighlights.map((text) => ({ text, className: 'search-highlight' })),
+  ].sort((a, b) => b.text.length - a.text.length);
+}
+
 function renderInline(text, highlights = []) {
   const pieces = text.split(/(\$[^$]+\$|\\\([^)]+\\\)|\\[a-zA-Z]+\{[^}]*\})/g).filter(Boolean);
   return pieces.map((piece, index) => {
@@ -1917,9 +2087,9 @@ function renderHighlightedText(text, highlights) {
   if (!highlights.length || !text) return text;
   const trimmedText = text.trim();
   if (trimmedText.length >= 6) {
-    const containingQuote = highlights.find((quote) => quote.toLowerCase().includes(trimmedText.toLowerCase()));
-    if (containingQuote && containingQuote.length > trimmedText.length) {
-      return <mark className="comment-highlight">{text}</mark>;
+    const containingQuote = highlights.find((highlight) => highlight.text.toLowerCase().includes(trimmedText.toLowerCase()));
+    if (containingQuote && containingQuote.text.length > trimmedText.length) {
+      return <mark className={containingQuote.className}>{text}</mark>;
     }
   }
 
@@ -1929,11 +2099,11 @@ function renderHighlightedText(text, highlights) {
 
   while (cursor < text.length) {
     let nextMatch = null;
-    highlights.forEach((quote) => {
-      const index = lowerText.indexOf(quote.toLowerCase(), cursor);
+    highlights.forEach((highlight) => {
+      const index = lowerText.indexOf(highlight.text.toLowerCase(), cursor);
       if (index === -1) return;
-      if (!nextMatch || index < nextMatch.index || (index === nextMatch.index && quote.length > nextMatch.quote.length)) {
-        nextMatch = { index, quote };
+      if (!nextMatch || index < nextMatch.index || (index === nextMatch.index && highlight.text.length > nextMatch.text.length)) {
+        nextMatch = { index, text: highlight.text, className: highlight.className };
       }
     });
 
@@ -1946,9 +2116,9 @@ function renderHighlightedText(text, highlights) {
       parts.push(text.slice(cursor, nextMatch.index));
     }
 
-    const end = nextMatch.index + nextMatch.quote.length;
+    const end = nextMatch.index + nextMatch.text.length;
     parts.push(
-      <mark key={`${nextMatch.index}-${end}-${parts.length}`} className="comment-highlight">
+      <mark key={`${nextMatch.index}-${end}-${parts.length}`} className={nextMatch.className}>
         {text.slice(nextMatch.index, end)}
       </mark>
     );
