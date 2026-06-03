@@ -575,13 +575,12 @@ function formatInfo(key) {
 }
 
 function createInitialState() {
-  const targetText = translateText(SAMPLE_SOURCE, 'zh-CN', 'en');
   return {
     fileName: 'sample-paper.tex',
     format: 'tex',
     savedAt: null,
     sourceText: SAMPLE_SOURCE,
-    targetText,
+    targetText: '',
     lastEdited: null,
     comments: [
       {
@@ -709,6 +708,7 @@ function App() {
   const llmTimerRef = useRef(null);
   const llmRequestRef = useRef(0);
   const pendingLlmRefinementRef = useRef(null);
+  const initialTranslationRef = useRef(null);
   const remoteUpdateRef = useRef(false);
 
   const stats = useMemo(() => {
@@ -903,6 +903,60 @@ function App() {
     window.clearTimeout(profileTimerRef.current);
     window.clearTimeout(llmTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    if (selectedDocId) return;
+    if (doc.fileName !== 'sample-paper.tex' || doc.targetText.trim()) return;
+    const key = `${doc.fileName}:${doc.sourceText}`;
+    if (initialTranslationRef.current === key) return;
+    initialTranslationRef.current = key;
+    translateInitialDocument(doc);
+  }, [selectedDocId, doc.fileName, doc.sourceText, doc.targetText, settings.sourceLang, settings.targetLang]);
+
+  async function translateInitialDocument(baseDoc, options = {}) {
+    const requestId = llmRequestRef.current + 1;
+    llmRequestRef.current = requestId;
+    setStatus(`正在用 Kimi 分段翻译 ${baseDoc.fileName}`);
+
+    let finalDoc = baseDoc;
+    try {
+      const llmTargetText = await translateDocumentWithLlm(
+        baseDoc.sourceText,
+        'source',
+        settings,
+        baseDoc.format,
+        'import'
+      );
+      finalDoc = {
+        ...baseDoc,
+        targetText: llmTargetText ?? translateForSync(baseDoc.sourceText, 'source', settings, ''),
+        lastEdited: null,
+      };
+      if (llmRequestRef.current !== requestId) return null;
+      setDoc((current) => {
+        if (current.fileName !== baseDoc.fileName || current.sourceText !== baseDoc.sourceText) return current;
+        return finalDoc;
+      });
+      setStatus(`已用 Kimi 完成 ${baseDoc.fileName} 分段翻译`);
+    } catch (error) {
+      finalDoc = {
+        ...baseDoc,
+        targetText: translateForSync(baseDoc.sourceText, 'source', settings, ''),
+        lastEdited: null,
+      };
+      if (llmRequestRef.current !== requestId) return null;
+      setDoc((current) => {
+        if (current.fileName !== baseDoc.fileName || current.sourceText !== baseDoc.sourceText) return current;
+        return finalDoc;
+      });
+      setStatus(`Kimi 初次翻译失败，已回退本地规则：${error.message}`);
+    }
+
+    if (options.createCloudAfter && cloudEnabled) {
+      await createCloudDocument(finalDoc);
+    }
+    return finalDoc;
+  }
 
   function queueLlmRefinement(side, activeText, passiveText, previousActiveText, format, nextSettings = settings) {
     if (syncMode !== 'auto') return;
@@ -1229,13 +1283,12 @@ function App() {
       rawText = await file.text();
     }
 
-    const localTargetText = translateForSync(rawText, 'source', settings, '');
     const nextDoc = {
       fileName: file.name,
       format,
       savedAt: null,
       sourceText: rawText,
-      targetText: localTargetText,
+      targetText: '',
       lastEdited: null,
       comments: [],
     };
@@ -1243,28 +1296,7 @@ function App() {
     pushUndoSnapshot();
     setDoc(nextDoc);
     setActiveSide('source');
-    setStatus(`已导入 ${file.name}`);
-    if (cloudEnabled) {
-      await createCloudDocument(nextDoc);
-    }
-    setStatus(`正在用 Kimi 分段翻译 ${file.name}`);
-    try {
-      const llmTargetText = await translateDocumentWithLlm(rawText, 'source', settings, format, 'import');
-      if (llmTargetText) {
-        setDoc((current) => {
-          if (current.fileName !== file.name || current.sourceText !== rawText) return current;
-          return {
-            ...current,
-            savedAt: null,
-            targetText: llmTargetText,
-            lastEdited: null,
-          };
-        });
-        setStatus(`已用 Kimi 完成 ${file.name} 分段翻译`);
-      }
-    } catch (error) {
-      setStatus(`Kimi 初次翻译失败，已保留本地规则译文：${error.message}`);
-    }
+    await translateInitialDocument(nextDoc, { createCloudAfter: cloudEnabled });
     event.target.value = '';
   }
 
