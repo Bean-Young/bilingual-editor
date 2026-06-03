@@ -28,6 +28,7 @@ const TRANSLATION_SKILL_PROMPT = [
   'Follow the source document style: preserve register, sentence rhythm, terminology, hedging, punctuation style, and academic tone.',
   'When previous target text is provided, perform a minimal-edit update on that previous target text: keep all still-correct wording unchanged and change only what is necessary to reflect the edited source.',
   'For refinement requests, use originalSource, editedSource, editSummary, and previousTarget together. The editedSource is the user-edited paragraph; previousTarget is the other side before this edit.',
+  'For patch requests, editedSource is only the newly inserted source fragment. Return only the translated fragment to insert on the other side, not the full paragraph and not previousTarget.',
   'Apply insertions, deletions, and replacements from editSummary to previousTarget with the smallest possible change.',
   'If editSummary contains added source-language text, translate that added text into the target language before inserting it into previousTarget.',
   'Do not copy newly added source-language words into the target text unless they are protected code, math, citations, labels, URLs, identifiers, or proper nouns that should remain unchanged.',
@@ -198,6 +199,20 @@ function enforceInsertedTextLanguage(output, addedText, sourceLang, targetLang) 
   });
 }
 
+function sanitizePatchTranslation(output, addedText, sourceLang, targetLang, previousTarget) {
+  const cleanAdded = String(addedText ?? '').trim();
+  const translatedAdded = localTranslateInsertedText(cleanAdded, sourceLang, targetLang);
+  const cleanOutput = String(output ?? '').trim();
+  if (!cleanOutput) return translatedAdded;
+  if (!translatedAdded || translatedAdded === cleanAdded) return cleanOutput;
+
+  const targetText = String(previousTarget ?? '').trim();
+  const returnedFullTarget = targetText && cleanOutput.includes(targetText);
+  const tooLongForPatch = cleanOutput.length > Math.max(80, translatedAdded.length * 5, cleanAdded.length * 5);
+  if (returnedFullTarget || tooLongForPatch) return translatedAdded;
+  return cleanOutput;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -222,15 +237,24 @@ export default async function handler(req, res) {
     const sourceLanguage = safeLanguageName(body.sourceLang);
     const targetLanguage = safeLanguageName(body.targetLang);
     const format = body.format || 'plain text';
-    const mode = body.mode === 'refine' ? 'refine an edited passage' : 'initial document translation';
+    const isPatchMode = body.mode === 'patch';
+    const mode = isPatchMode
+      ? 'translate inserted fragments for local bilingual sync'
+      : body.mode === 'refine'
+        ? 'refine an edited passage'
+        : 'initial document translation';
 
     const userPrompt = [
       `Task: ${mode}.`,
       `Source language: ${sourceLanguage}.`,
       `Target language: ${targetLanguage}.`,
       `Document format: ${format}.`,
-      'Translate each chunk independently. Keep paragraph breaks inside each chunk.',
-      referenceTranslations
+      isPatchMode
+        ? 'Each editedSource is only the user-added fragment. Return only the translated fragment for each item.'
+        : 'Translate each chunk independently. Keep paragraph breaks inside each chunk.',
+      isPatchMode
+        ? 'Use originalSource and previousTarget only as context for terminology and style. Do not return previousTarget or a full paragraph.'
+        : referenceTranslations
         ? 'Previous target translations are provided. Update them minimally so they match the new source chunks.'
         : 'No previous target translations are provided. Produce a direct translation from scratch.',
       'Input JSON:',
@@ -276,12 +300,18 @@ export default async function handler(req, res) {
       throw new Error('model returned an invalid translations array');
     }
 
-    const translations = parsed.translations.map((item, index) => enforceInsertedTextLanguage(
-      String(item ?? ''),
-      parseAddedText(changeSummaries?.[index]),
-      body.sourceLang,
-      body.targetLang
-    ));
+    const translations = parsed.translations.map((item, index) => {
+      const addedText = parseAddedText(changeSummaries?.[index]);
+      const languageChecked = enforceInsertedTextLanguage(
+        String(item ?? ''),
+        addedText,
+        body.sourceLang,
+        body.targetLang
+      );
+      return isPatchMode
+        ? sanitizePatchTranslation(languageChecked, addedText, body.sourceLang, body.targetLang, referenceTranslations?.[index])
+        : languageChecked;
+    });
 
     res.status(200).json({
       translations,

@@ -521,7 +521,17 @@ async function translateChangedBlocksWithLlm(jobs, side, settings, format) {
   if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) return new Map();
 
   const workItems = jobs
-    .filter((item) => item.text.trim() && !isProtectedMathBlock(item.text));
+    .filter((item) => item.text.trim() && !isProtectedMathBlock(item.text))
+    .map((item) => {
+      const addedText = item.change.added.trim();
+      if (!addedText || item.change.removed.trim()) return null;
+      return {
+        ...item,
+        llmText: addedText,
+        localPatch: localTranslateChangePatch(item.change, side, settings),
+      };
+    })
+    .filter(Boolean);
   const replacements = new Map();
 
   let cursor = 0;
@@ -530,19 +540,19 @@ async function translateChangedBlocksWithLlm(jobs, side, settings, format) {
     let batchChars = 0;
     while (cursor < workItems.length && batch.length < 8) {
       const item = workItems[cursor];
-      if (batch.length && batchChars + item.text.length > 7000) break;
+      if (batch.length && batchChars + item.llmText.length > 7000) break;
       batch.push(item);
-      batchChars += item.text.length;
+      batchChars += item.llmText.length;
       cursor += 1;
     }
 
-    const protectedBatch = batch.map((item) => maskInlineProtectedSyntax(item.text));
+    const protectedBatch = batch.map((item) => maskInlineProtectedSyntax(item.llmText));
     const translations = await requestLlmTranslations(
       protectedBatch.map((item) => item.text),
       direction,
       {
         format,
-        mode: 'refine',
+        mode: 'patch',
         referenceTranslations: batch.map((item) => item.reference),
         originalChunks: batch.map((item) => item.previousText),
         changeSummaries: batch.map((item) => item.change.summary),
@@ -550,7 +560,10 @@ async function translateChangedBlocksWithLlm(jobs, side, settings, format) {
     );
 
     batch.forEach((item, batchIndex) => {
-      replacements.set(item.index, restoreInlineProtectedSyntax(translations[batchIndex], protectedBatch[batchIndex].tokens));
+      const translatedPatch = restoreInlineProtectedSyntax(translations[batchIndex], protectedBatch[batchIndex].tokens).trim();
+      const patch = translatedPatch || item.localPatch;
+      if (!patch) return;
+      replacements.set(item.index, appendLocalPatch(item.reference, patch));
     });
   }
 
@@ -1459,14 +1472,12 @@ function App() {
   function previewText(side, value) {
     const previousActiveText = side === 'source' ? doc.sourceText : doc.targetText;
     const previousPassiveText = side === 'source' ? doc.targetText : doc.sourceText;
-    const nextPassiveText = side === 'source'
-      ? (syncMode === 'auto' ? localRealtimePassiveText(doc.sourceText, value, doc.targetText, 'source', settings) : doc.targetText)
-      : (syncMode === 'auto' ? localRealtimePassiveText(doc.targetText, value, doc.sourceText, 'target', settings) : doc.sourceText);
     setDoc((current) => {
       if (side === 'source') {
         return {
           ...current,
           savedAt: null,
+          sourceText: value,
           targetText: syncMode === 'auto'
             ? localRealtimePassiveText(current.sourceText, value, current.targetText, 'source', settings)
             : current.targetText,
@@ -1476,6 +1487,7 @@ function App() {
       return {
         ...current,
         savedAt: null,
+        targetText: value,
         sourceText: syncMode === 'auto'
           ? localRealtimePassiveText(current.targetText, value, current.sourceText, 'target', settings)
           : current.sourceText,
