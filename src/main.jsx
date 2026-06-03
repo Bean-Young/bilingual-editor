@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import { isSupabaseConfigured, supabase } from './supabaseClient';
+import { PUBLIC_EN_TO_ZH_TERMS, PUBLIC_ZH_TO_EN_TERMS } from './translation/publicZhEnTerms';
 import './styles.css';
 
 const SAMPLE_SOURCE = String.raw`\section{Introduction}
@@ -43,6 +44,30 @@ This editor shows the whole source document and the whole Chinese version side b
 const dictionary = [
   ['Large language models', '大语言模型'],
   ['language models', '语言模型'],
+  ['artificial intelligence', '人工智能'],
+  ['machine learning', '机器学习'],
+  ['deep learning', '深度学习'],
+  ['computer vision', '计算机视觉'],
+  ['medical imaging', '医学影像'],
+  ['medical image', '医学图像'],
+  ['image segmentation', '图像分割'],
+  ['lesion segmentation', '病灶分割'],
+  ['object detection', '目标检测'],
+  ['image classification', '图像分类'],
+  ['semantic segmentation', '语义分割'],
+  ['domain shift', '域偏移'],
+  ['test-time adaptation', '测试时自适应'],
+  ['breast ultrasound', '乳腺超声'],
+  ['ultrasound image', '超声图像'],
+  ['ablation study', '消融实验'],
+  ['experimental results', '实验结果'],
+  ['performance evaluation', '性能评估'],
+  ['state-of-the-art', '最先进'],
+  ['segmentation', '分割'],
+  ['classification', '分类'],
+  ['analysis', '分析'],
+  ['image', '图像'],
+  ['medical', '医学'],
   ['scientific writing', '科学写作'],
   ['data analysis', '数据分析'],
   ['code generation', '代码生成'],
@@ -67,6 +92,10 @@ const dictionary = [
 ];
 
 const reverseDictionary = dictionary.map(([en, zh]) => [zh, en]);
+const appEnToZhTerms = dictionary.map(([source, target]) => ({ source, target }));
+const appZhToEnTerms = reverseDictionary.map(([source, target]) => ({ source, target }));
+const enToZhTerms = buildTermList([...appEnToZhTerms, ...PUBLIC_EN_TO_ZH_TERMS], 'en');
+const zhToEnTerms = buildTermList([...appZhToEnTerms, ...PUBLIC_ZH_TO_EN_TERMS], 'zh');
 
 const LANGUAGES = [
   { code: 'auto', label: '智能识别', short: '自动' },
@@ -151,12 +180,53 @@ function preserveTexBlocks(text, transform) {
   return result;
 }
 
+function buildTermList(entries, language) {
+  const seen = new Set();
+  return entries
+    .filter(({ source, target }) => source && target && source !== target)
+    .filter(({ source }) => {
+      const key = language === 'en' ? source.toLowerCase() : source;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => b.source.length - a.source.length || a.source.localeCompare(b.source));
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function applyEnglishTerms(text, terms) {
+  const lowerText = text.toLowerCase();
+  let output = text;
+
+  terms.forEach(({ source, target }) => {
+    if (!source || !target || !lowerText.includes(source.toLowerCase())) return;
+    const pattern = new RegExp(`(^|[^A-Za-z0-9])(${escapeRegExp(source)})(?=$|[^A-Za-z0-9])`, 'gi');
+    output = output.replace(pattern, (match, prefix) => `${prefix}${target}`);
+  });
+
+  return output;
+}
+
+function applyChineseTerms(text, terms) {
+  let output = text;
+  terms.forEach(({ source, target }) => {
+    if (source && target && output.includes(source)) {
+      output = output.replaceAll(source, ` ${target} `);
+    }
+  });
+  return output
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s+([,.;:!?，。；：！？])/g, '$1')
+    .trim();
+}
+
 function localEnToZh(text) {
   return preserveTexBlocks(text, (input) => {
     let output = input;
-    dictionary.forEach(([en, zh]) => {
-      output = output.replace(new RegExp(en.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), zh);
-    });
+    output = applyEnglishTerms(output, enToZhTerms);
     return output
       .replace(/\bhas become\b/gi, '已经成为')
       .replace(/\bstill need\b/gi, '仍然需要')
@@ -169,11 +239,7 @@ function localEnToZh(text) {
 
 function localZhToEn(text) {
   return preserveTexBlocks(text, (input) => {
-    let output = input;
-    reverseDictionary.forEach(([zh, en]) => {
-      output = output.replaceAll(zh, en);
-    });
-    return output;
+    return applyChineseTerms(input, zhToEnTerms);
   });
 }
 
@@ -1749,6 +1815,10 @@ function SettingsPanel({ settings, cloudEnabled, displayName, profileStatus, onC
             </select>
           </label>
         </div>
+
+        <p className="settings-note">
+          中英术语层使用 CC-CEDICT 公开词典子集，按 CC BY-SA 4.0 授权。
+        </p>
 
       </section>
     </div>
