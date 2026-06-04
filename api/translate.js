@@ -8,6 +8,17 @@ const MAX_CHUNK_CHARS = 12000;
 const MAX_TOTAL_CHARS = 80000;
 const enToZhTerms = buildTermList([...PUBLIC_EN_TO_ZH_TERMS, ...ECDICT_EN_TO_ZH_TERMS], 'en');
 const zhToEnTerms = buildTermList(PUBLIC_ZH_TO_EN_TERMS, 'zh');
+const UI_EN_ZH_FALLBACK_TERMS = [
+  { source: 'large language models', target: '大型语言模型' },
+  { source: 'large language model', target: '大型语言模型' },
+  { source: 'hello', target: '你好' },
+];
+const UI_ZH_EN_FALLBACK_TERMS = [
+  { source: '大型语言模型', target: 'large language models' },
+  { source: '大语言模型', target: 'large language models' },
+  { source: '语言模型', target: 'language models' },
+  { source: '你好', target: 'hello' },
+];
 
 const languageNames = {
   auto: 'auto detected',
@@ -168,8 +179,12 @@ function applyChineseTerms(text, terms) {
 function localTranslateInsertedText(text, sourceLang, targetLang) {
   const clean = String(text ?? '').trim();
   if (!clean) return '';
-  if (targetLang === 'zh-CN' || targetLang === 'zh-TW') return applyEnglishTerms(clean, enToZhTerms).trim();
-  if (targetLang === 'en') return applyChineseTerms(clean, zhToEnTerms).trim();
+  if (targetLang === 'zh-CN' || targetLang === 'zh-TW') {
+    return applyEnglishTerms(applyEnglishTerms(clean, UI_EN_ZH_FALLBACK_TERMS), enToZhTerms).trim();
+  }
+  if (targetLang === 'en') {
+    return applyChineseTerms(applyChineseTerms(clean, UI_ZH_EN_FALLBACK_TERMS), zhToEnTerms).trim();
+  }
   return clean;
 }
 

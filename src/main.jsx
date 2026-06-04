@@ -44,6 +44,17 @@ This editor shows the whole source document and the whole Chinese version side b
 
 const enToZhTerms = buildTermList([...PUBLIC_EN_TO_ZH_TERMS, ...ECDICT_EN_TO_ZH_TERMS], 'en');
 const zhToEnTerms = buildTermList(PUBLIC_ZH_TO_EN_TERMS, 'zh');
+const UI_EN_ZH_FALLBACK_TERMS = [
+  { source: 'large language models', target: '大型语言模型' },
+  { source: 'large language model', target: '大型语言模型' },
+  { source: 'hello', target: '你好' },
+];
+const UI_ZH_EN_FALLBACK_TERMS = [
+  { source: '大型语言模型', target: 'large language models' },
+  { source: '大语言模型', target: 'large language models' },
+  { source: '语言模型', target: 'language models' },
+  { source: '你好', target: 'hello' },
+];
 
 const LANGUAGES = [
   { code: 'auto', label: '智能识别', short: '自动' },
@@ -184,6 +195,7 @@ function applyChineseTerms(text, terms) {
 function localEnToZh(text) {
   return preserveTexBlocks(text, (input) => {
     let output = input;
+    output = applyEnglishTerms(output, UI_EN_ZH_FALLBACK_TERMS);
     output = applyEnglishTerms(output, enToZhTerms);
     return output
       .replace(/\bhas become\b/gi, '已经成为')
@@ -197,7 +209,7 @@ function localEnToZh(text) {
 
 function localZhToEn(text) {
   return preserveTexBlocks(text, (input) => {
-    return applyChineseTerms(input, zhToEnTerms);
+    return applyChineseTerms(applyChineseTerms(input, UI_ZH_EN_FALLBACK_TERMS), zhToEnTerms);
   });
 }
 
@@ -577,7 +589,7 @@ async function translateChangedBlocksWithLlm(jobs, side, settings, format) {
 
     batch.forEach((item, batchIndex) => {
       const translatedPatch = restoreInlineProtectedSyntax(translations[batchIndex], protectedBatch[batchIndex].tokens).trim();
-      const patch = translatedPatch || item.localPatch;
+      const patch = sanitizeLlmPatchTranslation(translatedPatch, item.change.added, item.localPatch, direction);
       if (!patch) return;
       replacements.set(item.index, item.paragraphInsertion
         ? insertParagraphPatch(item.reference, item.referenceSeparator, patch)
@@ -633,6 +645,28 @@ function localTranslateChangePatch(change, side, settings) {
   const translated = translateText(added, direction.targetLang, direction.sourceLang).trim();
   if (!translated || translated === added) return null;
   return translated;
+}
+
+function sanitizeLlmPatchTranslation(translatedPatch, addedText, localPatch, direction) {
+  const patch = String(translatedPatch ?? '').trim();
+  const fallback = String(localPatch ?? '').trim();
+  if (!patch) return fallback;
+  if (!fallback) return patch;
+
+  const added = String(addedText ?? '').trim();
+  const patchLower = patch.toLowerCase();
+  const addedLower = added.toLowerCase();
+  const copiedSourceText = addedLower && patchLower.includes(addedLower);
+  const targetIsChinese = direction.targetLang === 'zh-CN' || direction.targetLang === 'zh-TW';
+  const fallbackIsChinese = /[\u3400-\u9fff]/.test(fallback);
+  const patchHasLatin = /[A-Za-z]{2,}/.test(patch);
+
+  if (copiedSourceText) return fallback;
+  if (targetIsChinese && fallbackIsChinese && patchHasLatin && !/^[A-Z][A-Za-z0-9_-]*$/.test(patch)) {
+    return fallback;
+  }
+
+  return patch;
 }
 
 function appendLocalPatch(text, patch) {
