@@ -1753,8 +1753,8 @@ function App() {
     [doc.sourceText, doc.targetText, search]
   );
   const matchCount = searchState.query ? searchState.totalMatches : null;
-  const sourceCommentHighlights = getCommentHighlights(visibleComments, 'source', draftComment);
-  const targetCommentHighlights = getCommentHighlights(visibleComments, 'target', draftComment);
+  const sourceCommentHighlights = getCommentHighlights(visibleComments, 'source', draftComment, doc.sourceText, doc.targetText);
+  const targetCommentHighlights = getCommentHighlights(visibleComments, 'target', draftComment, doc.sourceText, doc.targetText);
 
   if (!authReady) {
     return <div className="loading-screen">正在连接云端...</div>;
@@ -2755,18 +2755,66 @@ function normalizeFormula(text) {
     .trim();
 }
 
-function getCommentHighlights(comments, side, draft) {
-  const quotes = comments
+function getCommentHighlights(comments, side, draft, sourceText = '', targetText = '') {
+  const quotes = [];
+
+  comments
     .filter((comment) => !comment.resolved)
-    .map((comment) => (comment[side] ?? legacyCommentSide(comment, side)).quote)
-    .filter(Boolean);
+    .forEach((comment) => {
+      quotes.push(...commentHighlightCandidates(comment, side, sourceText, targetText));
+    });
 
   if (draft?.quote) {
-    quotes.push(draft.side === side ? draft.quote : makePairedCommentText(draft.quote, draft.side, 'quote'));
+    quotes.push(...draftHighlightCandidates(draft, side, sourceText, targetText));
   }
 
-  return [...new Set(quotes.map((quote) => quote.trim()).filter((quote) => quote.length >= 2))]
+  return [...new Set(quotes.map((quote) => normalizeHighlightQuote(quote)).filter((quote) => quote.length >= 2))]
     .sort((a, b) => b.length - a.length);
+}
+
+function commentHighlightCandidates(comment, side, sourceText, targetText) {
+  const active = comment[side] ?? legacyCommentSide(comment, side);
+  const otherSide = side === 'source' ? 'target' : 'source';
+  const other = comment[otherSide] ?? legacyCommentSide(comment, otherSide);
+  return [
+    active.quote,
+    makePairedCommentText(other.quote, otherSide, 'quote'),
+    ...alignedCommentBlockCandidates(other.quote, side, sourceText, targetText),
+  ];
+}
+
+function draftHighlightCandidates(draft, side, sourceText, targetText) {
+  if (draft.side === side) return [draft.quote];
+  return [
+    makePairedCommentText(draft.quote, draft.side, 'quote'),
+    ...alignedCommentBlockCandidates(draft.quote, side, sourceText, targetText),
+  ];
+}
+
+function alignedCommentBlockCandidates(otherQuote, side, sourceText, targetText) {
+  const otherText = side === 'source' ? targetText : sourceText;
+  const activeBlocks = renderBlocks(side === 'source' ? sourceText : targetText);
+  const otherBlocks = renderBlocks(otherText);
+  const candidates = [];
+
+  const otherIndex = blockIndexContainingQuote(otherBlocks, otherQuote);
+  if (otherIndex !== -1 && activeBlocks[otherIndex]?.text) {
+    candidates.push(activeBlocks[otherIndex].text);
+  }
+
+  return candidates;
+}
+
+function blockIndexContainingQuote(blocks, quote) {
+  const normalizedQuote = normalizeHighlightQuote(quote).toLowerCase();
+  if (normalizedQuote.length < 2) return -1;
+  return blocks.findIndex((block) => normalizeHighlightQuote(block.text).toLowerCase().includes(normalizedQuote));
+}
+
+function normalizeHighlightQuote(value) {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function buildInlineHighlights(commentHighlights, searchHighlights) {
