@@ -239,6 +239,42 @@
         color: var(--muted);
       }
 
+      .comparison-section {
+        padding: 0;
+        overflow: hidden;
+      }
+
+      .comparison-copy {
+        padding: 32px 32px 18px;
+      }
+
+      .comparison-figure {
+        margin: 0;
+        padding: 0 20px 22px;
+      }
+
+      .comparison-scroll {
+        overflow-x: auto;
+        padding-bottom: 8px;
+      }
+
+      .comparison-figure img {
+        display: block;
+        width: 100%;
+        min-width: 880px;
+        height: auto;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: white;
+        box-shadow: 0 16px 42px rgba(23, 39, 62, 0.12);
+      }
+
+      .comparison-figure figcaption {
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
       .grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -392,6 +428,28 @@
             </aside>
           </div>
         </div>
+      </section>
+
+      <section class="section comparison-section" id="comparison">
+        <div class="comparison-copy">
+          <h2>Why bilingual co-writing?</h2>
+          <p>
+            The core shift is moving from fragmented lookup-and-rewrite loops to a bilingual
+            editing workflow where terminology, revision context, and translation stay together.
+          </p>
+        </div>
+        <figure class="comparison-figure">
+          <div class="comparison-scroll">
+            <img
+              src="assets/workflow-comparison.png"
+              alt="Comparison diagram from traditional manual translation and LLM-era writing to the Bilingual Editor workflow"
+            />
+          </div>
+          <figcaption>
+            Traditional translation adds manual friction; direct LLM polishing is faster but less
+            controllable; Bilingual Editor keeps revision in a stable bilingual context.
+          </figcaption>
+        </figure>
       </section>
 
       <section class="section" id="overview">

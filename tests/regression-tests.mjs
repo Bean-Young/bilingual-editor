@@ -322,6 +322,11 @@ assert.match(
   /https:\/\/bilingual-editor\.vercel\.app\//,
   'GitHub Pages introduction page should link to the Vercel editor demo'
 );
+assert.match(
+  pagesIndexSource,
+  /assets\/workflow-comparison\.png/,
+  'GitHub Pages introduction page should include the workflow comparison image'
+);
 assert.doesNotMatch(
   pagesIndexSource,
   /<div id="root"><\/div>/,
