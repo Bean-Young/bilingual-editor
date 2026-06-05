@@ -66,6 +66,8 @@ const DEFAULT_SETTINGS = {
   translationModel: '',
 };
 
+const DEFAULT_TRANSLATE_API_URL = 'https://bilingual-editor.vercel.app/api/translate';
+
 const TRANSLATION_PROVIDERS = [
   {
     id: 'nvidia',
@@ -169,9 +171,18 @@ function resolveInputLanguage(text, configuredLanguage) {
   return configuredLanguage === 'auto' ? languageSignal(text).language : configuredLanguage;
 }
 
+function translateApiUrl() {
+  const configuredUrl = import.meta.env.VITE_TRANSLATE_API_URL?.trim();
+  if (configuredUrl) return configuredUrl;
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('github.io')) {
+    return DEFAULT_TRANSLATE_API_URL;
+  }
+  return '/api/translate';
+}
+
 async function requestLlmTranslations(chunks, direction, options = {}) {
   if (!chunks.length) return [];
-  const response = await fetch('/api/translate', {
+  const response = await fetch(translateApiUrl(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -206,7 +217,7 @@ async function requestLlmTranslations(chunks, direction, options = {}) {
 
 async function requestLlmBilingualSync(chunks, direction, options = {}) {
   if (!chunks.length) return { sources: [], translations: [] };
-  const response = await fetch('/api/translate', {
+  const response = await fetch(translateApiUrl(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

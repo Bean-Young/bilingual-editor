@@ -1,77 +1,57 @@
-# Deployment Checklist
+# Deployment
 
-The app is deployed to Vercel and can run in two modes:
+The public version is a no-login demo:
 
-- Local-only mode: no Supabase environment variables.
-- Cloud mode: Supabase variables are configured, enabling registration, login, cloud documents, sharing, and realtime collaboration.
+- Static app: https://bean-young.github.io/bilingual-editor/
+- Translation proxy: https://bilingual-editor.vercel.app/api/translate
 
-## 1. Supabase Setup
+## GitHub Pages
 
-1. Create a Supabase project.
-2. Open the Supabase SQL Editor.
-3. Run all SQL in `supabase/schema.sql`.
-4. In Supabase Authentication settings, enable Email provider.
-5. Copy:
-   - Project URL
-   - Project anon public key
+GitHub Pages is deployed by `.github/workflows/deploy-pages.yml`.
 
-## 2. Vercel Environment Variables
+Required repository setting:
 
-Add these variables in the Vercel project:
+1. Open GitHub repository Settings.
+2. Go to Pages.
+3. Set Source to `GitHub Actions`.
 
-```bash
-npx vercel env add VITE_SUPABASE_URL production
-npx vercel env add VITE_SUPABASE_ANON_KEY production
-npx vercel env add NVIDIA_API_KEY production
+After that, every push to `main` publishes the app at:
+
+```text
+https://bean-young.github.io/bilingual-editor/
 ```
 
-Optional NVIDIA variables:
+The workflow builds with:
 
-```bash
-npx vercel env add NVIDIA_MODEL production
-npx vercel env add NVIDIA_MAX_TOKENS production
-npx vercel env add NVIDIA_TEMPERATURE production
+```text
+VITE_BASE_PATH=/bilingual-editor/
+VITE_TRANSLATE_API_URL=https://bilingual-editor.vercel.app/api/translate
 ```
 
-Then redeploy:
+## Vercel API Proxy
+
+GitHub Pages cannot run serverless functions. The app therefore uses the Vercel deployment as the translation proxy.
+
+Keep the Vercel project deployed with:
 
 ```bash
 npx vercel deploy --prod
 ```
 
-The login screen appears only after the Supabase variables exist at build time.
-The Kimi translation endpoint works only after `NVIDIA_API_KEY` exists at runtime.
+The user enters their own DeepSeek, NVIDIA/Kimi, or custom OpenAI-compatible API key in the app settings. The key is sent to the Vercel proxy for that request and is not stored on the server.
 
-## 3. Domain Setup
-
-Current Vercel production URL:
-
-```text
-https://bilingual-editor.vercel.app
-```
-
-To use `translate.qd.je`, configure the domain registrar DNS. If using Vercel nameservers, set:
-
-```text
-ns1.vercel-dns.com
-ns2.vercel-dns.com
-```
-
-After DNS propagates, bind the alias:
+## Local Development
 
 ```bash
-npx vercel alias set bilingual-editor.vercel.app translate.qd.je
+npm install
+npm run dev
 ```
 
-If Vercel still says the domain is not accessible, wait for DNS propagation and retry.
+Local Vite development serves `/api/translate` through the dev middleware in `vite.config.js`.
 
-## 4. Collaboration Model
+## Manual Build Checks
 
-Collaboration currently uses document-level realtime updates:
-
-- Owner can invite registered users by email.
-- Invited collaborators can update the same document.
-- The sidebar shows who is currently online in the document.
-- Latest saved document state wins.
-
-For character-level Google Docs style merging, the next step is adding a CRDT layer such as Yjs.
+```bash
+npm run test:regression
+npm run build
+```

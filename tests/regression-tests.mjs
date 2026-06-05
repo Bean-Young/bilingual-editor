@@ -4,6 +4,8 @@ import { extractJson, normalizeModelTranslations } from '../api/translate.js';
 
 const mainSource = readFileSync(new URL('../src/main.jsx', import.meta.url), 'utf8');
 const translateApiSource = readFileSync(new URL('../api/translate.js', import.meta.url), 'utf8');
+const viteConfigSource = readFileSync(new URL('../vite.config.js', import.meta.url), 'utf8');
+const pagesWorkflowSource = readFileSync(new URL('../.github/workflows/deploy-pages.yml', import.meta.url), 'utf8');
 
 function proportionalTextSpan(text, startRatio, endRatio) {
   const value = String(text ?? '').replace(/\s+/g, ' ').trim();
@@ -288,6 +290,31 @@ assert.ok(
     ...removedLocalTranslationNames.slice(2),
   ].every((name) => !translateApiSource.includes(name)),
   'translate API should rely on model output instead of local substitutes'
+);
+assert.match(
+  mainSource,
+  /function translateApiUrl\(\)/,
+  'frontend should choose a translation API endpoint instead of hardcoding /api/translate'
+);
+assert.match(
+  mainSource,
+  /hostname\.endsWith\('github\.io'\)/,
+  'GitHub Pages builds should use the hosted translation proxy'
+);
+assert.match(
+  mainSource,
+  /https:\/\/bilingual-editor\.vercel\.app\/api\/translate/,
+  'GitHub Pages should point translation requests at the Vercel proxy'
+);
+assert.match(
+  viteConfigSource,
+  /base:\s*process\.env\.VITE_BASE_PATH\s*\|\|\s*'\.\/'/,
+  'Vite should allow GitHub Pages to build under /bilingual-editor/'
+);
+assert.match(
+  pagesWorkflowSource,
+  /VITE_BASE_PATH:\s*\/bilingual-editor\//,
+  'GitHub Pages workflow should build with the repository base path'
 );
 
 const sourceBlock = 'Alpha beta gamma delta epsilon zeta.';

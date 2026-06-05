@@ -99,7 +99,7 @@ export default defineConfig(({ mode }) => {
   Object.assign(process.env, loadEnv(mode, process.cwd(), ''));
 
   return {
-    base: './',
+    base: process.env.VITE_BASE_PATH || './',
     plugins: [react(), devApiPlugin()],
     build: {
       outDir: 'dist',
