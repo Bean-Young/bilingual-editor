@@ -324,8 +324,13 @@ assert.match(
 );
 assert.match(
   pagesIndexSource,
-  /assets\/workflow-comparison\.png/,
-  'GitHub Pages introduction page should include the workflow comparison image'
+  /assets\/workflow-comparison\.jpg/,
+  'GitHub Pages introduction page should include the compressed workflow comparison image'
+);
+assert.match(
+  pagesIndexSource,
+  /assets\/workflow-comparison\.pdf/,
+  'GitHub Pages introduction page should link to the compressed workflow comparison PDF'
 );
 assert.doesNotMatch(
   pagesIndexSource,
