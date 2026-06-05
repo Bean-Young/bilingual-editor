@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bilingual Editor</title>
+    <meta
+      name="description"
+      content="An Overleaf-inspired bilingual document editor for translation, revision, and review."
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #16202a;
+        --muted: #5b6675;
+        --line: #d9e0e8;
+        --soft: #f4f7fb;
+        --paper: #ffffff;
+        --accent: #2368d1;
+        --accent-dark: #154da3;
+        --mark: #fff2a8;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: #eef2f6;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        line-height: 1.6;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .shell {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 28px 22px 56px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 12px 0 28px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+      }
+
+      .brand-mark {
+        display: grid;
+        width: 36px;
+        height: 36px;
+        place-items: center;
+        border-radius: 8px;
+        color: white;
+        background: var(--accent);
+        font-weight: 900;
+      }
+
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      nav a {
+        text-decoration: none;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.06fr) minmax(340px, 0.94fr);
+        gap: 30px;
+        align-items: center;
+        padding: 32px 0 22px;
+      }
+
+      h1 {
+        margin: 0;
+        max-width: 860px;
+        font-size: clamp(40px, 7vw, 76px);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        max-width: 760px;
+        margin: 22px 0 0;
+        color: var(--muted);
+        font-size: 19px;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+        color: var(--ink);
+        font-weight: 750;
+        text-decoration: none;
+      }
+
+      .button.primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: white;
+      }
+
+      .button.primary:hover {
+        background: var(--accent-dark);
+      }
+
+      .mockup {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--paper);
+        box-shadow: 0 22px 60px rgba(23, 39, 62, 0.16);
+      }
+
+      .mockbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        height: 42px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--line);
+        background: #f8fafc;
+      }
+
+      .dot {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        background: #cbd5df;
+      }
+
+      .mockbody {
+        display: grid;
+        grid-template-columns: 0.18fr 1fr 1fr 0.6fr;
+        min-height: 360px;
+      }
+
+      .rail,
+      .pane,
+      .comments {
+        padding: 18px;
+        border-right: 1px solid var(--line);
+      }
+
+      .rail {
+        background: #f7f9fc;
+      }
+
+      .comments {
+        border-right: 0;
+      }
+
+      .mini-title {
+        margin: 0 0 16px;
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 800;
+      }
+
+      .line {
+        height: 10px;
+        margin: 12px 0;
+        border-radius: 99px;
+        background: #dfe6ee;
+      }
+
+      .line.short {
+        width: 58%;
+      }
+
+      .line.mid {
+        width: 78%;
+      }
+
+      .highlight {
+        display: inline;
+        padding: 1px 3px;
+        background: var(--mark);
+        border-radius: 3px;
+      }
+
+      .text-block {
+        margin: 0 0 16px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 15px;
+      }
+
+      .section {
+        margin-top: 48px;
+        padding: 32px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--paper);
+      }
+
+      .section h2 {
+        margin: 0 0 10px;
+        font-size: 28px;
+        line-height: 1.2;
+      }
+
+      .section > p {
+        max-width: 820px;
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 22px;
+      }
+
+      .card {
+        min-height: 150px;
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fbfcfe;
+      }
+
+      .card h3 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .format-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 22px;
+      }
+
+      .format-list span {
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #f7f9fc;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 24px;
+      }
+
+      .step {
+        padding: 18px;
+        border-radius: 10px;
+        background: var(--soft);
+      }
+
+      .step strong {
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      footer {
+        margin-top: 42px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      @media (max-width: 900px) {
+        .hero,
+        .grid,
+        .flow {
+          grid-template-columns: 1fr;
+        }
+
+        .mockbody {
+          grid-template-columns: 1fr;
+        }
+
+        .rail,
+        .pane,
+        .comments {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="https://bean-young.github.io/bilingual-editor/">
+          <span class="brand-mark">译</span>
+          <span>Bilingual Editor</span>
+        </a>
+        <nav aria-label="Project navigation">
+          <a href="#overview">Overview</a>
+          <a href="#workflow">Workflow</a>
+          <a href="#formats">Formats</a>
+          <a href="https://bilingual-editor.vercel.app/">Demo</a>
+          <a href="https://github.com/Bean-Young/bilingual-editor">Code</a>
+        </nav>
+      </header>
+
+      <section class="hero">
+        <div>
+          <h1>Side-by-side bilingual writing for technical documents.</h1>
+          <p class="lead">
+            Bilingual Editor is an Overleaf-inspired workspace for translating, revising, and
+            reviewing LaTeX, Markdown, Word, and plain-text documents without leaving the document
+            context.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="https://bilingual-editor.vercel.app/">Launch live demo</a>
+            <a class="button" href="https://github.com/Bean-Young/bilingual-editor">View source</a>
+          </div>
+        </div>
+
+        <div class="mockup" aria-label="Bilingual editor preview">
+          <div class="mockbar">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <div class="mockbody">
+            <aside class="rail">
+              <p class="mini-title">Outline</p>
+              <div class="line short"></div>
+              <div class="line mid"></div>
+              <div class="line"></div>
+            </aside>
+            <section class="pane">
+              <p class="mini-title">Source</p>
+              <p class="text-block">
+                Large language models have become a
+                <span class="highlight">practical interface</span> for scientific writing.
+              </p>
+              <p class="text-block">Researchers still need reliable bilingual revision.</p>
+            </section>
+            <section class="pane">
+              <p class="mini-title">Translation</p>
+              <p class="text-block">
+                大型语言模型已成为科学写作的
+                <span class="highlight">实用接口</span>。
+              </p>
+              <p class="text-block">研究人员仍需要可靠的双语修订流程。</p>
+            </section>
+            <aside class="comments">
+              <p class="mini-title">Review Notes</p>
+              <div class="line"></div>
+              <div class="line short"></div>
+              <div class="line mid"></div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="overview">
+        <h2>Overview</h2>
+        <p>
+          The editor keeps the original document and its translated version visible at the same
+          time. Users can edit either side, add review comments as guidance, and trigger model-based
+          synchronization with minimal changes to the opposite side.
+        </p>
+        <div class="grid">
+          <article class="card">
+            <h3>Overleaf-style layout</h3>
+            <p>Source, translation, outline, and review notes stay in one compact workspace.</p>
+          </article>
+          <article class="card">
+            <h3>Model-guided sync</h3>
+            <p>Idle and manual sync submit local context to an OpenAI-compatible translation API.</p>
+          </article>
+          <article class="card">
+            <h3>Review comments</h3>
+            <p>Selected comments become revision suggestions for grammar, wording, and terminology.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="workflow">
+        <h2>Workflow</h2>
+        <p>
+          The live demo runs on Vercel. This GitHub Pages site is the project introduction page.
+        </p>
+        <div class="flow">
+          <div class="step">
+            <strong>1. Import</strong>
+            Start from the demo TeX file or upload your own editable document.
+          </div>
+          <div class="step">
+            <strong>2. Translate</strong>
+            Configure a provider API key and generate the bilingual version.
+          </div>
+          <div class="step">
+            <strong>3. Revise</strong>
+            Edit either side and add review suggestions on selected text.
+          </div>
+          <div class="step">
+            <strong>4. Sync</strong>
+            Run automatic or manual model sync to update both versions.
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="formats">
+        <h2>Supported Formats</h2>
+        <p>
+          The editor targets source-like documents and common writing formats used in academic and
+          technical workflows.
+        </p>
+        <div class="format-list" aria-label="Supported file extensions">
+          <span>.tex</span>
+          <span>.md</span>
+          <span>.markdown</span>
+          <span>.txt</span>
+          <span>.docx</span>
+          <span>.rtf</span>
+          <span>.html</span>
+          <span>.htm</span>
+          <span>.bib</span>
+          <span>.rst</span>
+          <span>.csv</span>
+          <span>.tsv</span>
+          <span>.json</span>
+          <span>.yaml</span>
+          <span>.yml</span>
+          <span>.xml</span>
+        </div>
+      </section>
+
+      <footer>
+        <p>
+          Demo app:
+          <a href="https://bilingual-editor.vercel.app/">bilingual-editor.vercel.app</a>
+          · Source:
+          <a href="https://github.com/Bean-Young/bilingual-editor">Bean-Young/bilingual-editor</a>
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>

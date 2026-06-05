@@ -6,6 +6,7 @@ const mainSource = readFileSync(new URL('../src/main.jsx', import.meta.url), 'ut
 const translateApiSource = readFileSync(new URL('../api/translate.js', import.meta.url), 'utf8');
 const viteConfigSource = readFileSync(new URL('../vite.config.js', import.meta.url), 'utf8');
 const pagesWorkflowSource = readFileSync(new URL('../.github/workflows/deploy-pages.yml', import.meta.url), 'utf8');
+const pagesIndexSource = readFileSync(new URL('../pages/index.html', import.meta.url), 'utf8');
 
 function proportionalTextSpan(text, startRatio, endRatio) {
   const value = String(text ?? '').replace(/\s+/g, ' ').trim();
@@ -313,8 +314,18 @@ assert.match(
 );
 assert.match(
   pagesWorkflowSource,
-  /VITE_BASE_PATH:\s*\/bilingual-editor\//,
-  'GitHub Pages workflow should build with the repository base path'
+  /npm run build:pages/,
+  'GitHub Pages workflow should publish the introduction page, not the editor app'
+);
+assert.match(
+  pagesIndexSource,
+  /https:\/\/bilingual-editor\.vercel\.app\//,
+  'GitHub Pages introduction page should link to the Vercel editor demo'
+);
+assert.doesNotMatch(
+  pagesIndexSource,
+  /<div id="root"><\/div>/,
+  'GitHub Pages should not publish the React editor root as the landing page'
 );
 
 const sourceBlock = 'Alpha beta gamma delta epsilon zeta.';

@@ -2,9 +2,10 @@
 
 An Overleaf-inspired bilingual document editor for side-by-side translation, editing, and review.
 
-Public demo:
+Public links:
 
-- GitHub Pages: https://bean-young.github.io/bilingual-editor/
+- Live demo: https://bilingual-editor.vercel.app/
+- Project page: https://bean-young.github.io/bilingual-editor/
 - Vercel API proxy: https://bilingual-editor.vercel.app/api/translate
 
 ## Features
@@ -25,7 +26,7 @@ There is no required login flow in the public demo.
 
 ## Translation API
 
-The static GitHub Pages build cannot host `/api/translate`, so it calls the Vercel proxy by default:
+The live demo is deployed on Vercel, where `/api/translate` is available as a serverless API route:
 
 ```text
 https://bilingual-editor.vercel.app/api/translate
@@ -57,18 +58,18 @@ npm run build
 
 The production build is written to `dist/`.
 
+To build the GitHub Pages introduction site:
+
+```bash
+npm run build:pages
+```
+
 ## GitHub Pages
 
 This repository includes `.github/workflows/deploy-pages.yml`.
 
-On every push to `main`, GitHub Actions runs regression tests, builds with:
-
-```text
-VITE_BASE_PATH=/bilingual-editor/
-VITE_TRANSLATE_API_URL=https://bilingual-editor.vercel.app/api/translate
-```
-
-and publishes `dist` to GitHub Pages.
+On every push to `main`, GitHub Actions runs regression tests, builds the static
+project introduction page in `pages/`, and publishes it to GitHub Pages.
 
 ## License
 

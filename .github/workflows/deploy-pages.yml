@@ -34,11 +34,8 @@ jobs:
       - name: Run regression tests
         run: npm run test:regression
 
-      - name: Build
-        run: npm run build
-        env:
-          VITE_BASE_PATH: /bilingual-editor/
-          VITE_TRANSLATE_API_URL: https://bilingual-editor.vercel.app/api/translate
+      - name: Build introduction page
+        run: npm run build:pages
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
