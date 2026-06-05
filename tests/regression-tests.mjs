@@ -324,13 +324,18 @@ assert.match(
 );
 assert.match(
   pagesIndexSource,
-  /assets\/workflow-comparison\.jpg/,
-  'GitHub Pages introduction page should include the compressed workflow comparison image'
+  /<object[\s\S]*assets\/workflow-comparison\.pdf[\s\S]*type="application\/pdf"/,
+  'GitHub Pages introduction page should render the workflow comparison PDF inline'
 );
 assert.match(
   pagesIndexSource,
-  /assets\/workflow-comparison\.pdf/,
-  'GitHub Pages introduction page should link to the compressed workflow comparison PDF'
+  /assets\/workflow-comparison\.jpg/,
+  'GitHub Pages introduction page should keep the compressed image as a fallback'
+);
+assert.doesNotMatch(
+  pagesIndexSource,
+  /Open PDF/,
+  'GitHub Pages introduction page should not show an Open PDF link for the workflow figure'
 );
 assert.doesNotMatch(
   pagesIndexSource,

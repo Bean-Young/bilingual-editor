@@ -258,15 +258,24 @@
         padding-bottom: 8px;
       }
 
+      .comparison-figure object,
       .comparison-figure img {
         display: block;
         width: 100%;
         min-width: 880px;
-        height: auto;
         border: 1px solid var(--line);
         border-radius: 12px;
         background: white;
         box-shadow: 0 16px 42px rgba(23, 39, 62, 0.12);
+      }
+
+      .comparison-figure object {
+        height: min(62vw, 620px);
+        min-height: 520px;
+      }
+
+      .comparison-figure img {
+        height: auto;
       }
 
       .comparison-figure figcaption {
@@ -440,15 +449,21 @@
         </div>
         <figure class="comparison-figure">
           <div class="comparison-scroll">
-            <img
-              src="assets/workflow-comparison.jpg"
-              alt="Comparison diagram from traditional manual translation and LLM-era writing to the Bilingual Editor workflow"
-            />
+            <object
+              class="comparison-pdf"
+              data="assets/workflow-comparison.pdf"
+              type="application/pdf"
+              aria-label="Comparison diagram from traditional manual translation and LLM-era writing to the Bilingual Editor workflow"
+            >
+              <img
+                src="assets/workflow-comparison.jpg"
+                alt="Comparison diagram from traditional manual translation and LLM-era writing to the Bilingual Editor workflow"
+              />
+            </object>
           </div>
           <figcaption>
             Traditional translation adds manual friction; direct LLM polishing is faster but less
             controllable; Bilingual Editor keeps revision in a stable bilingual context.
-            <a href="assets/workflow-comparison.pdf">Open PDF</a>.
           </figcaption>
         </figure>
       </section>
