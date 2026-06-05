@@ -324,13 +324,23 @@ assert.match(
 );
 assert.match(
   pagesIndexSource,
-  /<object[\s\S]*assets\/workflow-comparison\.pdf[\s\S]*type="application\/pdf"/,
-  'GitHub Pages introduction page should render the workflow comparison PDF inline'
+  /class="button github-star"[\s\S]*https:\/\/github\.com\/Bean-Young\/bilingual-editor[\s\S]*>\s*<svg[\s\S]*>\s*Star\s*<\/a>/,
+  'GitHub Pages introduction page should include a GitHub-style Star link'
 );
 assert.match(
   pagesIndexSource,
-  /assets\/workflow-comparison\.jpg/,
-  'GitHub Pages introduction page should keep the compressed image as a fallback'
+  /src="assets\/workflow-comparison@1600\.jpg"/,
+  'GitHub Pages introduction page should render the workflow comparison image directly'
+);
+assert.match(
+  pagesIndexSource,
+  /assets\/workflow-comparison\.jpg[\s\S]*1200w[\s\S]*assets\/workflow-comparison@1600\.jpg[\s\S]*1600w/,
+  'GitHub Pages introduction page should keep responsive compressed image sources'
+);
+assert.doesNotMatch(
+  pagesIndexSource,
+  /<object[\s\S]*workflow-comparison\.pdf[\s\S]*type="application\/pdf"/,
+  'GitHub Pages introduction page should not render the workflow figure with the PDF viewer'
 );
 assert.doesNotMatch(
   pagesIndexSource,
