@@ -138,6 +138,25 @@
         background: var(--accent-dark);
       }
 
+      .button.github-star {
+        gap: 8px;
+        border-color: #24292f;
+        background: #24292f;
+        color: #ffffff;
+      }
+
+      .button.github-star:hover {
+        background: #0969da;
+        border-color: #0969da;
+      }
+
+      .button.github-star svg {
+        width: 17px;
+        height: 17px;
+        flex: 0 0 auto;
+        fill: currentColor;
+      }
+
       .mockup {
         overflow: hidden;
         border: 1px solid var(--line);
@@ -258,7 +277,6 @@
         padding-bottom: 8px;
       }
 
-      .comparison-figure object,
       .comparison-figure img {
         display: block;
         width: 100%;
@@ -267,11 +285,6 @@
         border-radius: 12px;
         background: white;
         box-shadow: 0 16px 42px rgba(23, 39, 62, 0.12);
-      }
-
-      .comparison-figure object {
-        height: min(62vw, 620px);
-        min-height: 520px;
       }
 
       .comparison-figure img {
@@ -397,6 +410,18 @@
           <div class="actions">
             <a class="button primary" href="https://bilingual-editor.vercel.app/">Launch live demo</a>
             <a class="button" href="https://github.com/Bean-Young/bilingual-editor">View source</a>
+            <a
+              class="button github-star"
+              href="https://github.com/Bean-Young/bilingual-editor"
+              aria-label="Star Bean-Young/bilingual-editor on GitHub"
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.968.719 4.194a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.195L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"
+                />
+              </svg>
+              Star
+            </a>
           </div>
         </div>
 
@@ -449,17 +474,19 @@
         </div>
         <figure class="comparison-figure">
           <div class="comparison-scroll">
-            <object
-              class="comparison-pdf"
-              data="assets/workflow-comparison.pdf"
-              type="application/pdf"
-              aria-label="Comparison diagram from traditional manual translation and LLM-era writing to the Bilingual Editor workflow"
-            >
-              <img
-                src="assets/workflow-comparison.jpg"
-                alt="Comparison diagram from traditional manual translation and LLM-era writing to the Bilingual Editor workflow"
-              />
-            </object>
+            <img
+              src="assets/workflow-comparison@1600.jpg"
+              srcset="
+                assets/workflow-comparison.jpg       1200w,
+                assets/workflow-comparison@1600.jpg 1600w
+              "
+              sizes="(max-width: 900px) 880px, 1040px"
+              width="1600"
+              height="890"
+              loading="lazy"
+              decoding="async"
+              alt="Comparison diagram from traditional manual translation and LLM-era writing to the Bilingual Editor workflow"
+            />
           </div>
           <figcaption>
             Traditional translation adds manual friction; direct LLM polishing is faster but less
