@@ -11,6 +11,12 @@
   --accent-border: hsl(214 44% 74%);
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -18,9 +24,9 @@
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
+  min-height: 100%;
   background: #eef1f2;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 button,
@@ -42,7 +48,9 @@ button:disabled {
 .app-shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .app-shell.sidebar-collapsed {
@@ -54,7 +62,9 @@ button:disabled {
   grid-row: 1;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow-y: auto;
   background: #fbfcfc;
   border-right: 1px solid #d8dee3;
   color: #263238;
@@ -437,6 +447,8 @@ button:disabled {
 .cloud-doc-list {
   display: grid;
   gap: 5px;
+  max-height: 168px;
+  overflow: auto;
   padding: 0 8px 12px;
 }
 
@@ -541,13 +553,61 @@ button:disabled {
   line-height: 18px;
 }
 
+.recent-file-list {
+  display: grid;
+  gap: 5px;
+  max-height: 168px;
+  overflow: auto;
+  padding: 0 8px 12px;
+}
+
+.recent-file-list button {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 44px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: transparent;
+  color: #334148;
+  text-align: left;
+}
+
+.recent-file-list button:hover {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.recent-file-list span,
+.recent-file-list strong,
+.recent-file-list em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-file-list strong {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.recent-file-list em {
+  color: #708087;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 15px;
+}
+
 .outline-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
   overflow: auto;
   padding: 0 8px 12px;
-  max-height: calc(100vh - 252px);
+  max-height: 260px;
 }
 
 .outline-list button,
@@ -583,7 +643,9 @@ button:disabled {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .topbar {
@@ -803,6 +865,7 @@ button:disabled {
   gap: 10px;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
   padding: 10px;
 }
 
@@ -815,6 +878,7 @@ button:disabled {
   grid-template-columns: minmax(260px, var(--left-width)) 12px minmax(260px, 1fr);
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .editor-pane {
@@ -970,7 +1034,7 @@ button:disabled {
   inset: 0;
   min-height: 100%;
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
   background: transparent;
   color: transparent;
   caret-color: var(--accent);
@@ -1147,6 +1211,7 @@ button:disabled {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   border: 1px solid #d8dee3;
   background: #ffffff;
 }
@@ -1180,8 +1245,21 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 9px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 10px;
+}
+
+.sidebar,
+.cloud-doc-list,
+.recent-file-list,
+.outline-list,
+.document-surface,
+.raw-highlight-input,
+.comment-list {
+  scrollbar-width: thin;
+  scrollbar-color: #b8c2c7 transparent;
 }
 
 .empty-comments {
@@ -1535,7 +1613,27 @@ button:disabled {
   border-bottom: 1px solid #eef2f3;
 }
 
-.settings-grid select {
+.settings-section .settings-grid {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.settings-field {
+  display: block;
+  margin-top: 14px;
+}
+
+.settings-field > span {
+  display: block;
+  margin-bottom: 8px;
+  color: #3b4950;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.settings-grid select,
+.settings-grid input,
+.settings-field input {
   width: 100%;
   height: 36px;
   padding: 0 10px;
@@ -1544,6 +1642,13 @@ button:disabled {
   background: #ffffff;
   color: #263238;
   font-size: 13px;
+}
+
+.settings-grid input:focus,
+.settings-field input:focus,
+.settings-grid select:focus {
+  border-color: var(--accent-border);
+  outline: 2px solid var(--accent-soft);
 }
 
 .settings-grid select:disabled {

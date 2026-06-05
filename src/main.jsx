@@ -26,8 +26,6 @@ import {
 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import { isSupabaseConfigured, supabase } from './supabaseClient';
-import { ECDICT_EN_TO_ZH_TERMS } from './translation/publicEcdictTerms';
-import { PUBLIC_EN_TO_ZH_TERMS, PUBLIC_ZH_TO_EN_TERMS } from './translation/publicZhEnTerms';
 import './styles.css';
 
 const SAMPLE_SOURCE = String.raw`\section{Introduction}
@@ -42,20 +40,9 @@ This editor shows the whole source document and the whole Chinese version side b
   p(y \mid x) = \prod_{t=1}^{T} p(y_t \mid y_{<t}, x)
 \end{equation}`;
 
-const enToZhTerms = buildTermList([...PUBLIC_EN_TO_ZH_TERMS, ...ECDICT_EN_TO_ZH_TERMS], 'en');
-const zhToEnTerms = buildTermList(PUBLIC_ZH_TO_EN_TERMS, 'zh');
-const UI_EN_ZH_FALLBACK_TERMS = [
-  { source: 'large language models', target: '大型语言模型' },
-  { source: 'large language model', target: '大型语言模型' },
-  { source: 'hello', target: '你好' },
-];
-const UI_ZH_EN_FALLBACK_TERMS = [
-  { source: '大型语言模型', target: 'large language models' },
-  { source: '大语言模型', target: 'large language models' },
-  { source: '语言模型', target: 'language models' },
-  { source: '你好', target: 'hello' },
-];
-
+const ENABLE_IDLE_LLM_REFINEMENT = true;
+const LLM_BACKOFF_MS = 30_000;
+const CLOUD_FEATURES_ENABLED = false;
 const LANGUAGES = [
   { code: 'auto', label: '智能识别', short: '自动' },
   { code: 'zh-CN', label: '中文简体', short: '中' },
@@ -73,7 +60,32 @@ const DEFAULT_SETTINGS = {
   autoDetect: true,
   sourceLang: 'auto',
   targetLang: 'auto',
+  translationProvider: 'deepseek',
+  translationApiKey: '',
+  translationBaseUrl: '',
+  translationModel: '',
 };
+
+const TRANSLATION_PROVIDERS = [
+  {
+    id: 'nvidia',
+    label: 'NVIDIA / Kimi',
+    model: 'moonshotai/kimi-k2.6',
+    baseUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    model: 'deepseek-chat',
+    baseUrl: 'https://api.deepseek.com/v1/chat/completions',
+  },
+  {
+    id: 'custom',
+    label: '自定义兼容接口',
+    model: '',
+    baseUrl: '',
+  },
+];
 
 const DEFAULT_DISPLAY_NAME = 'name';
 
@@ -93,161 +105,6 @@ const FORMAT_DETAILS = [
 const ACCEPTED_EXTENSIONS = FORMAT_DETAILS
   .flatMap((format) => format.extensions.split(' '))
   .join(',');
-
-const traditionalMap = {
-  大: '大',
-  语: '語',
-  言: '言',
-  模: '模',
-  型: '型',
-  科: '科',
-  学: '學',
-  写: '寫',
-  作: '作',
-  数: '數',
-  据: '據',
-  分: '分',
-  析: '析',
-  代: '代',
-  码: '碼',
-  生: '生',
-  成: '成',
-  文: '文',
-  档: '檔',
-  简: '簡',
-  体: '體',
-  译: '譯',
-  对: '對',
-  调: '調',
-  整: '整',
-  两: '兩',
-  侧: '側',
-  动: '動',
-};
-
-function preserveTexBlocks(text, transform) {
-  const blocks = [];
-  const protectedTexPattern = /(\\begin\{[\s\S]*?\\end\{[^}]+\}|\$[^$]*\$|\\(?:cite|citep|citet|ref|eqref|autoref|cref|label|url|href|includegraphics|bibliography|bibliographystyle)(?:\[[^\]]*])?(?:\{[^}]*\})+)/g;
-  const masked = text.replace(protectedTexPattern, (match) => {
-    const key = `__TEX_${blocks.length}__`;
-    blocks.push(match);
-    return key;
-  });
-  const commandNames = [];
-  const commandMasked = masked.replace(/\\[A-Za-z]+\*?/g, (match) => {
-    const key = `__TEXCMD_${commandNames.length}__`;
-    commandNames.push(match);
-    return key;
-  });
-  let result = transform(commandMasked);
-  commandNames.forEach((command, index) => {
-    result = result.replaceAll(`__TEXCMD_${index}__`, command);
-  });
-  blocks.forEach((block, index) => {
-    result = result.replace(`__TEX_${index}__`, block);
-  });
-  return result;
-}
-
-function buildTermList(entries, language) {
-  const seen = new Set();
-  return entries
-    .filter(({ source, target }) => source && target && source !== target)
-    .filter(({ source }) => {
-      const key = language === 'en' ? source.toLowerCase() : source;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => b.source.length - a.source.length || a.source.localeCompare(b.source));
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function applyEnglishTerms(text, terms) {
-  const lowerText = text.toLowerCase();
-  let output = text;
-
-  terms.forEach(({ source, target }) => {
-    if (!source || !target || !lowerText.includes(source.toLowerCase())) return;
-    const pattern = new RegExp(`(^|[^A-Za-z0-9])(${escapeRegExp(source)})(?=$|[^A-Za-z0-9])`, 'gi');
-    output = output.replace(pattern, (match, prefix) => `${prefix}${target}`);
-  });
-
-  return output;
-}
-
-function applyChineseTerms(text, terms) {
-  let output = text;
-  terms.forEach(({ source, target }) => {
-    if (source && target && output.includes(source)) {
-      output = output.replaceAll(source, ` ${target} `);
-    }
-  });
-  return output
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\s+([,.;:!?，。；：！？])/g, '$1')
-    .trim();
-}
-
-function localEnToZh(text) {
-  return preserveTexBlocks(text, (input) => {
-    let output = input;
-    output = applyEnglishTerms(output, UI_EN_ZH_FALLBACK_TERMS);
-    output = applyEnglishTerms(output, enToZhTerms);
-    return output
-      .replace(/\bhas become\b/gi, '已经成为')
-      .replace(/\bstill need\b/gi, '仍然需要')
-      .replace(/\bshows\b/gi, '显示')
-      .replace(/\bside by side\b/gi, '并排')
-      .replace(/\bcan be dragged\b/gi, '可以拖动')
-      .replace(/\bto resize both panes\b/gi, '来调整两侧大小');
-  });
-}
-
-function localZhToEn(text) {
-  return preserveTexBlocks(text, (input) => {
-    return applyChineseTerms(applyChineseTerms(input, UI_ZH_EN_FALLBACK_TERMS), zhToEnTerms);
-  });
-}
-
-function sanitizeEnglishTranslation(text) {
-  return preserveTexBlocks(text, (input) => input
-    .replace(/[，]/g, ', ')
-    .replace(/[。]/g, '.')
-    .replace(/[；]/g, '; ')
-    .replace(/[：]/g, ': ')
-    .replace(/[！？]/g, (match) => (match === '！' ? '!' : '?'))
-    .replace(/[、]/g, ', ')
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/[（）]/g, (match) => (match === '（' ? '(' : ')'))
-    .replace(/[和与及]/g, ' and ')
-    .replace(/[或]/g, ' or ')
-    .replace(/[的地得了着过于为]/g, ' ')
-    .replace(/[\u3400-\u9fff]+/g, ' ')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\s+([,.;:!?])/g, '$1')
-    .replace(/([({[])\s+/g, '$1')
-    .replace(/\s+([)}\]])/g, '$1')
-    .replace(/\n[ \t]+/g, '\n')
-    .trim());
-}
-
-function translateText(text, targetLang, sourceLang = 'auto') {
-  const resolvedTarget = targetLang === 'auto' ? inferTargetLanguage(text) : targetLang;
-  const resolvedSource = sourceLang === 'auto' ? inferSourceLanguage(text) : sourceLang;
-
-  if (resolvedTarget === 'zh-CN') return localEnToZh(text);
-  if (resolvedTarget === 'zh-TW') return toTraditional(localEnToZh(text));
-  if (resolvedTarget === 'en') return sanitizeEnglishTranslation(localZhToEn(text));
-
-  const targetLabel = languageLabel(resolvedTarget);
-  const base = resolvedSource.startsWith('zh') ? localZhToEn(text) : localEnToZh(text);
-  return `[${targetLabel}占位翻译]\n${base}`;
-}
 
 function inferSourceLanguage(text) {
   return languageSignal(text).language;
@@ -312,14 +169,6 @@ function resolveInputLanguage(text, configuredLanguage) {
   return configuredLanguage === 'auto' ? languageSignal(text).language : configuredLanguage;
 }
 
-function translateForSync(text, side, settings, fallbackText) {
-  const direction = resolveSideDirection(text, side, settings);
-  if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) {
-    return fallbackText;
-  }
-  return translateText(text, direction.targetLang, direction.sourceLang);
-}
-
 async function requestLlmTranslations(chunks, direction, options = {}) {
   if (!chunks.length) return [];
   const response = await fetch('/api/translate', {
@@ -334,12 +183,20 @@ async function requestLlmTranslations(chunks, direction, options = {}) {
       referenceTranslations: options.referenceTranslations,
       originalChunks: options.originalChunks,
       changeSummaries: options.changeSummaries,
+      reviewSuggestions: options.reviewSuggestions,
+      paragraphInsertions: options.paragraphInsertions,
+      provider: options.provider,
+      apiKey: options.apiKey,
+      baseUrl: options.baseUrl,
+      model: options.model,
     }),
   });
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error || '大模型翻译失败');
+    const error = new Error(payload.error || '大模型翻译失败');
+    error.status = response.status;
+    throw error;
   }
   if (!Array.isArray(payload.translations) || payload.translations.length !== chunks.length) {
     throw new Error('大模型返回结果数量不匹配');
@@ -347,41 +204,210 @@ async function requestLlmTranslations(chunks, direction, options = {}) {
   return payload.translations.map((item) => String(item ?? ''));
 }
 
-async function translateDocumentWithLlm(text, side, settings, format, mode = 'import') {
+async function requestLlmBilingualSync(chunks, direction, options = {}) {
+  if (!chunks.length) return { sources: [], translations: [] };
+  const response = await fetch('/api/translate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chunks,
+      sourceLang: direction.sourceLang,
+      targetLang: direction.targetLang,
+      format: options.format,
+      mode: 'bilingual-sync',
+      referenceTranslations: options.referenceTranslations,
+      originalChunks: options.originalChunks,
+      changeSummaries: options.changeSummaries,
+      reviewSuggestions: options.reviewSuggestions,
+      paragraphInsertions: options.paragraphInsertions,
+      provider: options.provider,
+      apiKey: options.apiKey,
+      baseUrl: options.baseUrl,
+      model: options.model,
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.error || '大模型同步失败');
+    error.status = response.status;
+    throw error;
+  }
+  if (!Array.isArray(payload.sources) || payload.sources.length !== chunks.length) {
+    throw new Error('大模型返回源文数量不匹配');
+  }
+  if (!Array.isArray(payload.translations) || payload.translations.length !== chunks.length) {
+    throw new Error('大模型返回译文数量不匹配');
+  }
+  return {
+    sources: payload.sources.map((item) => String(item ?? '')),
+    translations: payload.translations.map((item) => String(item ?? '')),
+  };
+}
+
+async function requestLlmTranslationsWithRetry(chunks, direction, options = {}) {
+  try {
+    return await requestLlmTranslations(chunks, direction, options);
+  } catch (error) {
+    if (shouldRetryLlmRateLimit(error, options)) {
+      const attempt = options.rateLimitAttempt ?? 0;
+      const waitMs = llmRateLimitDelayMs(attempt);
+      options.onRateLimit?.(attempt + 1, waitMs);
+      await waitForLlmRetry(waitMs);
+      return requestLlmTranslationsWithRetry(chunks, direction, {
+        ...options,
+        rateLimitAttempt: attempt + 1,
+      });
+    }
+
+    if (!shouldRetryLlmFormatError(error)) {
+      throw error;
+    }
+    if (chunks.length > 1) {
+      const middle = Math.ceil(chunks.length / 2);
+      const left = await requestLlmTranslationsWithRetry(chunks.slice(0, middle), direction, options);
+      const right = await requestLlmTranslationsWithRetry(chunks.slice(middle), direction, options);
+      return [...left, ...right];
+    }
+
+    if (options.retrySingle !== false) {
+      await waitForLlmRetry(700);
+      return requestLlmTranslations(chunks, direction, { ...options, retrySingle: false });
+    }
+
+    throw error;
+  }
+}
+
+function shouldRetryLlmRateLimit(error, options) {
+  const message = String(error?.message ?? '');
+  if (options.mode !== 'import') return false;
+  if (!(error?.status === 429 || /429|Too Many Requests/i.test(message))) return false;
+  return (options.rateLimitAttempt ?? 0) < (options.maxRateLimitRetries ?? 6);
+}
+
+function llmRateLimitDelayMs(attempt) {
+  return [15_000, 30_000, 60_000, 90_000, 120_000, 180_000][attempt] ?? 180_000;
+}
+
+function shouldRetryLlmFormatError(error) {
+  const message = String(error?.message ?? '');
+  if (/429|Too Many Requests|missing NVIDIA_API_KEY|401|403/i.test(message)) return false;
+  return /数量不匹配|invalid translations array|did not return JSON|model returned|JSON/i.test(message);
+}
+
+function waitForLlmRetry(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function translateDocumentWithLlm(text, side, settings, format, mode = 'import', onProgress = null) {
   const direction = resolveSideDirection(text, side, settings);
   if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) return null;
 
   const blocks = segmentSyncBlocks(text);
   const translatedBlocks = blocks.map((block) => ({ ...block }));
   const queue = blocks
-    .map((block, index) => ({ index, text: block.text }))
+    .flatMap((block, index) => splitBlockForLlm(block.text).map((part, partIndex, parts) => ({
+      index,
+      partIndex,
+      partCount: parts.length,
+      text: part.text,
+      separator: part.separator,
+    })))
     .filter((block) => block.text.trim() && !isProtectedMathBlock(block.text));
+  const translatedParts = new Map();
+  let completed = 0;
 
   let cursor = 0;
   while (cursor < queue.length) {
     const batch = [];
     let batchChars = 0;
-    while (cursor < queue.length && batch.length < 10) {
+    const maxBatchSize = mode === 'import' ? 1 : 6;
+    const maxBatchChars = mode === 'import' ? 2200 : 7000;
+    while (cursor < queue.length && batch.length < maxBatchSize) {
       const item = queue[cursor];
-      if (batch.length && batchChars + item.text.length > 9000) break;
+      if (batch.length && batchChars + item.text.length > maxBatchChars) break;
       batch.push(item);
       batchChars += item.text.length;
       cursor += 1;
     }
 
     const protectedBatch = batch.map((item) => maskInlineProtectedSyntax(item.text));
-    const translations = await requestLlmTranslations(
+    const translations = await requestLlmTranslationsWithRetry(
       protectedBatch.map((item) => item.text),
       direction,
-      { format, mode }
+      {
+        format,
+        mode,
+        ...translationServiceOptions(settings),
+        onRateLimit: (attempt, waitMs) => {
+          onProgress?.(completed, queue.length, `翻译服务限速，等待 ${Math.ceil(waitMs / 1000)} 秒后重试当前段（第 ${attempt} 次）`);
+        },
+      }
     );
 
     batch.forEach((item, batchIndex) => {
-      translatedBlocks[item.index].text = restoreInlineProtectedSyntax(translations[batchIndex], protectedBatch[batchIndex].tokens);
+      const translated = restoreInlineProtectedSyntax(translations[batchIndex], protectedBatch[batchIndex].tokens);
+      if (item.partCount <= 1) {
+        translatedBlocks[item.index].text = translated;
+        return;
+      }
+      const key = item.index;
+      const parts = translatedParts.get(key) ?? Array(item.partCount).fill(null);
+      parts[item.partIndex] = `${translated}${item.separator}`;
+      translatedParts.set(key, parts);
     });
+    completed += batch.length;
+    onProgress?.(completed, queue.length);
+    if (mode === 'import' && cursor < queue.length) {
+      await waitForLlmRetry(2000);
+    }
   }
 
+  translatedParts.forEach((parts, index) => {
+    if (parts.every((part) => part !== null)) {
+      translatedBlocks[index].text = parts.join('').trim();
+    }
+  });
+
   return translatedBlocks.map((block) => `${block.text}${block.separator}`).join('');
+}
+
+function splitBlockForLlm(text, maxChars = 1800) {
+  const value = String(text ?? '');
+  if (value.length <= maxChars) return [{ text: value, separator: '' }];
+
+  const pieces = [];
+  const pattern = /([^。！？.!?\n]+[。！？.!?]?\s*|\n+)/g;
+  let match;
+  while ((match = pattern.exec(value)) !== null) {
+    if (match[0]) pieces.push(match[0]);
+  }
+  if (!pieces.length) return splitHardByLength(value, maxChars);
+
+  const chunks = [];
+  let current = '';
+  pieces.forEach((piece) => {
+    if (current && current.length + piece.length > maxChars) {
+      chunks.push(current);
+      current = piece;
+    } else {
+      current += piece;
+    }
+  });
+  if (current) chunks.push(current);
+
+  return chunks.flatMap((chunk) => (
+    chunk.length > maxChars ? splitHardByLength(chunk, maxChars) : [{ text: chunk.trim(), separator: ' ' }]
+  ));
+}
+
+function splitHardByLength(text, maxChars) {
+  const chunks = [];
+  for (let index = 0; index < text.length; index += maxChars) {
+    chunks.push({ text: text.slice(index, index + maxChars).trim(), separator: ' ' });
+  }
+  return chunks;
 }
 
 function isProtectedMathBlock(text) {
@@ -510,6 +536,150 @@ function changedBlockJobs(previousActiveText, nextActiveText, previousPassiveTex
     .filter(Boolean);
 }
 
+function commentGuidanceJobs(activeText, passiveText, quote, suggestion) {
+  const activeBlocks = segmentSyncBlocks(activeText);
+  const passiveBlocks = segmentSyncBlocks(passiveText);
+  const normalizedQuote = normalizeHighlightQuote(quote).toLowerCase();
+  if (!normalizedQuote) return [];
+
+  const range = commentBlockRangeForQuote(activeBlocks, normalizedQuote);
+  if (!range.length) return [];
+
+  return range.map((index) => {
+    const activeBlock = activeBlocks[index];
+    const passiveBlock = passiveBlocks[index] ?? { text: '', separator: '\n\n' };
+    return {
+      index,
+      previousText: activeBlock.text,
+      text: activeBlock.text,
+      reference: passiveBlock.text,
+      referenceSeparator: passiveBlock.separator,
+      paragraphInsertion: false,
+      change: {
+        prefix: activeBlock.text,
+        suffix: '',
+        removed: '',
+        added: '',
+        summary: `review suggestion for selected quote ${JSON.stringify(quote)}: ${JSON.stringify(suggestion)}`,
+      },
+    };
+  });
+}
+
+function commentBlockRangeForQuote(blocks, normalizedQuote) {
+  const directIndex = blocks.findIndex((block) =>
+    normalizeHighlightQuote(block.text).toLowerCase().includes(normalizedQuote)
+  );
+  if (directIndex !== -1) return [directIndex];
+
+  const spans = [];
+  let cursor = 0;
+  const joined = blocks
+    .map((block, index) => {
+      const text = normalizeHighlightQuote(block.text).toLowerCase();
+      const start = cursor;
+      const end = cursor + text.length;
+      spans.push({ index, start, end, text });
+      cursor = end + 1;
+      return text;
+    })
+    .join(' ');
+  const start = joined.indexOf(normalizedQuote);
+  if (start === -1) return [];
+  const end = start + normalizedQuote.length;
+  return spans
+    .filter((span) => span.text && span.end > start && span.start < end)
+    .map((span) => span.index);
+}
+
+function mergeSyncJobs(existingJobs = [], guidanceJobs = []) {
+  const byIndex = new Map();
+  existingJobs.forEach((job) => {
+    byIndex.set(job.index, job);
+  });
+
+  guidanceJobs.forEach((job) => {
+    const existing = byIndex.get(job.index);
+    if (!existing) {
+      byIndex.set(job.index, job);
+      return;
+    }
+
+    byIndex.set(job.index, {
+      ...existing,
+      referenceSeparator: existing.referenceSeparator ?? job.referenceSeparator,
+      change: {
+        ...existing.change,
+        summary: [existing.change?.summary, job.change?.summary].filter(Boolean).join('\n'),
+      },
+    });
+  });
+
+  return Array.from(byIndex.values()).sort((a, b) => a.index - b.index);
+}
+
+function commentSuggestionsForJob(comments, side, job) {
+  return matchedCommentsForJob(comments, side, job)
+    .map((comment) => {
+      const entry = comment[side];
+      return `Selected text: ${entry.quote}\nSuggestion: ${entry.text}`;
+    })
+    .join('\n\n');
+}
+
+function matchedCommentsForJob(comments, side, job) {
+  if (!Array.isArray(comments) || !comments.length) return [];
+  const normalizedTexts = [
+    job.text,
+    job.previousText,
+    job.change?.added,
+  ].map((item) => normalizeHighlightQuote(item).toLowerCase());
+
+  return comments
+    .filter((comment) => !comment.resolved)
+    .filter((comment) => {
+      const entry = comment[side];
+      if (!entry?.quote || !entry?.text) return false;
+      const quote = normalizeHighlightQuote(entry.quote).toLowerCase();
+      return quote.length >= 2 && normalizedTexts
+        .filter((text) => text.length >= 2)
+        .some((text) => text.includes(quote) || quote.includes(text));
+    });
+}
+
+function processedCommentIdsForJobs(comments, side, jobs) {
+  const ids = new Set();
+  jobs.forEach((job) => {
+    matchedCommentsForJob(comments, side, job).forEach((comment) => ids.add(comment.id));
+  });
+  return ids;
+}
+
+function pendingSides(pending) {
+  if (!pending) return {};
+  if (pending.sides && typeof pending.sides === 'object') return pending.sides;
+  if (pending.side) return { [pending.side]: pending };
+  return {};
+}
+
+function pendingSideJobs(pending) {
+  return Object.values(pendingSides(pending)).filter((item) => item?.jobs?.length);
+}
+
+function pendingSideJob(pending, side) {
+  return pendingSides(pending)[side] ?? null;
+}
+
+function upsertPendingSide(pending, sideJob, comments) {
+  return {
+    sides: {
+      ...pendingSides(pending),
+      [sideJob.side]: sideJob,
+    },
+    comments,
+  };
+}
+
 function diffTextChange(previousText, nextText) {
   let prefixLength = 0;
   const maxPrefix = Math.min(previousText.length, nextText.length);
@@ -544,35 +714,29 @@ function replaceSyncBlocks(text, replacements) {
     .join('');
 }
 
-async function translateChangedBlocksWithLlm(jobs, side, settings, format) {
+function applySyncReplacements(text, replacements, rendered, format) {
+  if (!replacements.size) return text;
+  return rendered ? replaceRenderedBlocks(text, replacements, format) : replaceSyncBlocks(text, replacements);
+}
+
+function activeJobIndexes(sideJobs, side) {
+  const job = sideJobs.find((item) => item.side === side);
+  return new Set(job?.jobs?.map((item) => item.index) ?? []);
+}
+
+async function translateChangedBlocksWithLlm(jobs, side, settings, format, comments = []) {
   const direction = resolveSideDirection(jobs[0]?.text ?? '', side, settings);
   if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) return new Map();
 
   const workItems = jobs
     .filter((item) => item.text.trim() && !isProtectedMathBlock(item.text))
-    .map((item) => {
-      const addedText = item.change.added.trim();
-      if (!addedText || item.change.removed.trim()) return null;
-      return {
-        ...item,
-        llmText: addedText,
-        localPatch: localTranslateChangePatch(item.change, side, settings),
-      };
-    })
-    .filter(Boolean);
+    .map((item) => ({ ...item, llmText: item.text }));
   const replacements = new Map();
 
   let cursor = 0;
   while (cursor < workItems.length) {
-    const batch = [];
-    let batchChars = 0;
-    while (cursor < workItems.length && batch.length < 8) {
-      const item = workItems[cursor];
-      if (batch.length && batchChars + item.llmText.length > 7000) break;
-      batch.push(item);
-      batchChars += item.llmText.length;
-      cursor += 1;
-    }
+    const batch = [workItems[cursor]];
+    cursor += 1;
 
     const protectedBatch = batch.map((item) => maskInlineProtectedSyntax(item.llmText));
     const translations = await requestLlmTranslations(
@@ -580,98 +744,244 @@ async function translateChangedBlocksWithLlm(jobs, side, settings, format) {
       direction,
       {
         format,
-        mode: 'patch',
+        mode: 'refine',
+        ...translationServiceOptions(settings),
         referenceTranslations: batch.map((item) => item.reference),
         originalChunks: batch.map((item) => item.previousText),
         changeSummaries: batch.map((item) => item.change.summary),
+        reviewSuggestions: batch.map((item) => commentSuggestionsForJob(comments, side, item)),
       }
     );
 
     batch.forEach((item, batchIndex) => {
-      const translatedPatch = restoreInlineProtectedSyntax(translations[batchIndex], protectedBatch[batchIndex].tokens).trim();
-      const patch = sanitizeLlmPatchTranslation(translatedPatch, item.change.added, item.localPatch, direction);
-      if (!patch) return;
-      replacements.set(item.index, item.paragraphInsertion
-        ? insertParagraphPatch(item.reference, item.referenceSeparator, patch)
-        : appendLocalPatch(item.reference, patch));
+      const translatedBlock = restoreInlineProtectedSyntax(translations[batchIndex], protectedBatch[batchIndex].tokens).trim();
+      if (!translatedBlock) return;
+      if (item.paragraphInsertion) {
+        replacements.set(item.index, insertParagraphPatch(item.reference, item.referenceSeparator, translatedBlock));
+        return;
+      }
+      replacements.set(item.index, translatedBlock);
     });
   }
 
   return replacements;
 }
 
-function mergeEditedSyncBlocks(previousActiveText, nextActiveText, previousPassiveText, side, settings) {
-  if (previousActiveText === nextActiveText) return previousPassiveText;
-
-  const previousActiveBlocks = segmentSyncBlocks(previousActiveText);
-  const nextActiveBlocks = segmentSyncBlocks(nextActiveText);
-  const previousPassiveBlocks = segmentSyncBlocks(previousPassiveText);
-  const unchangedMap = mapUnchangedBlocks(previousActiveBlocks, nextActiveBlocks);
-
-  return nextActiveBlocks
-    .map((block, index) => {
-      const previousIndex = unchangedMap.get(index);
-      const passiveText = previousIndex === undefined
-        ? translateForSync(block.text, side, settings, '')
-        : previousPassiveBlocks[previousIndex]?.text ?? translateForSync(block.text, side, settings, '');
-      return `${passiveText}${block.separator}`;
-    })
-    .join('');
-}
-
-function localRealtimePassiveText(previousActiveText, nextActiveText, previousPassiveText, side, settings) {
-  const jobs = changedBlockJobs(previousActiveText, nextActiveText, previousPassiveText);
-  if (!jobs.length) return previousPassiveText;
+async function reviseActiveBlocksWithLlm(jobs, side, settings, format, comments = []) {
+  const activeSetting = side === 'source' ? settings.sourceLang : settings.targetLang;
+  const activeLanguage = resolveInputLanguage(jobs[0]?.text ?? '', activeSetting);
+  const direction = { sourceLang: activeLanguage, targetLang: activeLanguage };
+  const workItems = jobs
+    .filter((item) => item.text.trim() && !isProtectedMathBlock(item.text))
+    .map((item) => ({ ...item, llmText: item.text }));
   const replacements = new Map();
 
-  jobs.forEach((job) => {
-    const localPatch = localTranslateChangePatch(job.change, side, settings);
-    if (localPatch === null) return;
-    replacements.set(job.index, job.paragraphInsertion
-      ? insertParagraphPatch(job.reference, job.referenceSeparator, localPatch)
-      : appendLocalPatch(job.reference, localPatch));
-  });
+  let cursor = 0;
+  while (cursor < workItems.length) {
+    const batch = [workItems[cursor]];
+    cursor += 1;
 
-  if (!replacements.size) return previousPassiveText;
-  const candidate = replaceSyncBlocks(previousPassiveText, replacements);
-  return wouldDamagePassiveText(candidate, previousPassiveText, nextActiveText, side, settings) ? previousPassiveText : candidate;
-}
+    const protectedBatch = batch.map((item) => maskInlineProtectedSyntax(item.llmText));
+    const translations = await requestLlmTranslations(
+      protectedBatch.map((item) => item.text),
+      direction,
+      {
+        format,
+        mode: 'review-source',
+        ...translationServiceOptions(settings),
+        originalChunks: batch.map((item) => item.previousText),
+        changeSummaries: batch.map((item) => item.change.summary),
+        reviewSuggestions: batch.map((item) => commentSuggestionsForJob(comments, side, item)),
+      }
+    );
 
-function localTranslateChangePatch(change, side, settings) {
-  const added = change.added.trim();
-  if (!added || change.removed.trim()) return null;
-  const direction = resolveSideDirection(added, side, settings);
-  if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) return null;
-  const translated = translateText(added, direction.targetLang, direction.sourceLang).trim();
-  if (!translated || translated === added) return null;
-  return translated;
-}
-
-function sanitizeLlmPatchTranslation(translatedPatch, addedText, localPatch, direction) {
-  const patch = String(translatedPatch ?? '').trim();
-  const fallback = String(localPatch ?? '').trim();
-  if (!patch) return fallback;
-  if (!fallback) return patch;
-
-  const added = String(addedText ?? '').trim();
-  const patchLower = patch.toLowerCase();
-  const addedLower = added.toLowerCase();
-  const copiedSourceText = addedLower && patchLower.includes(addedLower);
-  const targetIsChinese = direction.targetLang === 'zh-CN' || direction.targetLang === 'zh-TW';
-  const fallbackIsChinese = /[\u3400-\u9fff]/.test(fallback);
-  const patchHasLatin = /[A-Za-z]{2,}/.test(patch);
-
-  if (copiedSourceText) return fallback;
-  if (targetIsChinese && fallbackIsChinese && patchHasLatin && !/^[A-Z][A-Za-z0-9_-]*$/.test(patch)) {
-    return fallback;
+    batch.forEach((item, batchIndex) => {
+      const revisedBlock = restoreInlineProtectedSyntax(translations[batchIndex], protectedBatch[batchIndex].tokens).trim();
+      if (revisedBlock) replacements.set(item.index, revisedBlock);
+    });
   }
 
-  return patch;
+  return replacements;
+}
+
+async function syncChangedBlocksWithLlm(jobs, side, settings, format, comments = []) {
+  const direction = resolveSideDirection(jobs[0]?.text ?? '', side, settings);
+  if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) {
+    return { activeReplacements: new Map(), passiveReplacements: new Map() };
+  }
+
+  const workItems = jobs
+    .filter((item) => item.text.trim() && !isProtectedMathBlock(item.text))
+    .map((item) => ({ ...item, llmText: item.text }));
+  const activeReplacements = new Map();
+  const passiveReplacements = new Map();
+
+  let cursor = 0;
+  while (cursor < workItems.length) {
+    const batch = [workItems[cursor]];
+    cursor += 1;
+
+    const protectedBatch = batch.map((item) => maskInlineProtectedSyntax(item.llmText));
+    const result = await requestLlmBilingualSync(
+      protectedBatch.map((item) => item.text),
+      direction,
+      {
+        format,
+        ...translationServiceOptions(settings),
+        referenceTranslations: batch.map((item) => item.reference),
+        originalChunks: batch.map((item) => item.previousText),
+        changeSummaries: batch.map((item) => item.change.summary),
+        reviewSuggestions: batch.map((item) => commentSuggestionsForJob(comments, side, item)),
+        paragraphInsertions: batch.map((item) => Boolean(item.paragraphInsertion)),
+      }
+    );
+
+    batch.forEach((item, batchIndex) => {
+      const sourceBlock = restoreInlineProtectedSyntax(result.sources[batchIndex], protectedBatch[batchIndex].tokens).trim();
+      const translatedBlock = restoreInlineProtectedSyntax(result.translations[batchIndex], protectedBatch[batchIndex].tokens).trim();
+      if (sourceBlock && !item.paragraphInsertion) {
+        activeReplacements.set(item.index, sourceBlock);
+      }
+      if (!translatedBlock) return;
+      if (item.paragraphInsertion) {
+        passiveReplacements.set(item.index, insertParagraphPatch(item.reference, item.referenceSeparator, translatedBlock));
+        return;
+      }
+      passiveReplacements.set(item.index, translatedBlock);
+    });
+  }
+
+  return { activeReplacements, passiveReplacements };
+}
+
+function jobsWithActiveRevisions(jobs, activeReplacements) {
+  if (!activeReplacements.size) return jobs;
+  return jobs.map((job) => {
+    const revisedText = activeReplacements.get(job.index);
+    if (!revisedText) return job;
+    return {
+      ...job,
+      previousText: job.text,
+      text: revisedText,
+      change: diffTextChange(job.text, revisedText),
+    };
+  });
+}
+
+function changedRenderedBlockJobs(previousActiveText, nextActiveText, previousPassiveText) {
+  const previousActiveBlocks = keyedRenderedBlocks(previousActiveText);
+  const nextActiveBlocks = keyedRenderedBlocks(nextActiveText);
+  const previousPassiveBlocks = keyedRenderedBlocks(previousPassiveText);
+  const previousByKey = new Map(previousActiveBlocks.map((block) => [block.key, block]));
+  const passiveByKey = new Map(previousPassiveBlocks.map((block) => [block.key, block]));
+  const jobs = [];
+  let insertedRun = [];
+
+  function flushInsertedRun(anchorBlock) {
+    if (!insertedRun.length) return;
+    const passiveBlock = anchorBlock ? passiveByKey.get(anchorBlock.key) : previousPassiveBlocks[0];
+    if (!passiveBlock) {
+      insertedRun = [];
+      return;
+    }
+    const insertedText = insertedRun.map((block) => block.text).join('\n\n');
+    jobs.push({
+      index: passiveBlock.index,
+      previousText: '',
+      text: insertedText,
+      reference: passiveBlock.text,
+      referenceSeparator: '\n\n',
+      paragraphInsertion: true,
+      change: {
+        prefix: '',
+        suffix: '',
+        removed: '',
+        added: insertedText,
+        summary: `inserted rendered block(s): ${JSON.stringify(insertedText)}`,
+      },
+    });
+    insertedRun = [];
+  }
+
+  let lastMatchedBlock = null;
+  nextActiveBlocks.forEach((block) => {
+    const previousBlock = previousByKey.get(block.key);
+    if (!previousBlock) {
+      if (block.text.trim() && block.type !== 'equation') insertedRun.push(block);
+      return;
+    }
+
+    flushInsertedRun(lastMatchedBlock ?? previousBlock);
+    lastMatchedBlock = previousBlock;
+    if (previousBlock.text === block.text) return;
+    const passiveBlock = passiveByKey.get(block.key);
+    if (!passiveBlock) return;
+    jobs.push({
+      index: passiveBlock.index,
+      previousText: previousBlock.text,
+      text: block.text,
+      reference: passiveBlock.text,
+      referenceSeparator: '\n\n',
+      paragraphInsertion: false,
+      change: diffTextChange(previousBlock.text, block.text),
+    });
+  });
+
+  flushInsertedRun(lastMatchedBlock);
+  return mergeRenderedInsertionJobs(jobs);
+}
+
+function mergeRenderedInsertionJobs(jobs) {
+  const merged = [];
+  jobs.forEach((job) => {
+    const previous = merged[merged.length - 1];
+    if (job.paragraphInsertion && previous?.paragraphInsertion && previous.index === job.index) {
+      previous.text = [previous.text, job.text].filter(Boolean).join('\n\n');
+      previous.change.added = [previous.change.added, job.change.added].filter(Boolean).join('\n\n');
+      previous.change.summary = `inserted rendered block(s): ${JSON.stringify(previous.change.added)}`;
+      return;
+    }
+    merged.push({ ...job, change: { ...job.change } });
+  });
+  return merged;
+}
+
+function keyedRenderedBlocks(text) {
+  const counters = new Map();
+  let h1 = 0;
+  let h2 = 0;
+  return renderBlocks(text).map((block, index) => {
+    if (block.type === 'h1') {
+      h1 += 1;
+      h2 = 0;
+      return { ...block, index, key: `h1:${h1}` };
+    }
+    if (block.type === 'h2') {
+      h2 += 1;
+      return { ...block, index, key: `h1:${h1}|h2:${h2}` };
+    }
+    const scope = `h1:${h1}|h2:${h2}|${block.type}`;
+    const count = (counters.get(scope) ?? 0) + 1;
+    counters.set(scope, count);
+    return { ...block, index, key: `${scope}:${count}` };
+  });
+}
+
+function replaceRenderedBlocks(text, replacements, format) {
+  return renderBlocks(text)
+    .map((block, index) => serializeRenderedBlock(block.type, replacements.has(index) ? replacements.get(index) : block.text, format))
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 function appendLocalPatch(text, patch) {
   if (!text.trim()) return patch;
-  const spacer = /[\u3400-\u9fff]$/.test(text.trim()) || /^[\u3400-\u9fff]/.test(patch) ? '' : ' ';
+  const left = text.trim();
+  const right = patch.trim();
+  const noSpace = /\s$/.test(text)
+    || /^[,.;:!?，。；：！？、]/.test(right)
+    || (/[\u3400-\u9fff]$/.test(left) && /^[\u3400-\u9fff]/.test(right));
+  const spacer = noSpace ? '' : ' ';
   return `${text}${spacer}${patch}`;
 }
 
@@ -751,17 +1061,8 @@ function languageShort(code) {
   return LANGUAGES.find((item) => item.code === code)?.short ?? code;
 }
 
-function toTraditional(text) {
-  return text.replace(/[大语言模型科学写作数据代码文档简体译对调整两侧动]/g, (char) => traditionalMap[char] ?? char);
-}
-
-function makePairedCommentText(text, side, kind) {
-  if (!text) return '';
-  const converted = side === 'source' ? localEnToZh(text) : localZhToEn(text);
-  if (converted === text && kind === 'text') {
-    return side === 'source' ? `译文侧：${text}` : `Source side: ${text}`;
-  }
-  return converted;
+function makePairedCommentText() {
+  return '';
 }
 
 function themeVars(hue) {
@@ -800,22 +1101,48 @@ function createInitialState() {
     sourceText: SAMPLE_SOURCE,
     targetText: '',
     lastEdited: null,
-    comments: [
-      {
-        id: crypto.randomUUID(),
-        source: {
-          text: 'You can keep terminology, style, or review notes here.',
-          quote: 'Large language models',
-        },
-        target: {
-          text: '这里可以记录术语、句式或审稿意见。',
-          quote: '大语言模型',
-        },
-        resolved: false,
-        createdAt: new Date().toLocaleString('zh-CN', { hour12: false }),
-      },
-    ],
+    comments: [],
   };
+}
+
+function consumeLocalResetRequest() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('reset') || window.__bilingualEditorResetConsumed) return false;
+    window.__bilingualEditorResetConsumed = true;
+    [
+      'bilingual-editor:last-document',
+      'bilingual-editor:recent-documents',
+    ].forEach((key) => localStorage.removeItem(key));
+    params.delete('reset');
+    const query = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loadInitialState() {
+  try {
+    if (consumeLocalResetRequest()) return createInitialState();
+    const raw = localStorage.getItem('bilingual-editor:last-document');
+    if (!raw) return createInitialState();
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object') return createInitialState();
+    return {
+      ...createInitialState(),
+      fileName: saved.fileName || 'sample-paper.tex',
+      format: saved.format || detectFormat(saved.fileName || 'sample-paper.tex'),
+      savedAt: saved.savedAt ?? null,
+      sourceText: String(saved.sourceText ?? ''),
+      targetText: String(saved.targetText ?? ''),
+      lastEdited: saved.lastEdited ?? null,
+      comments: Array.isArray(saved.comments) ? saved.comments : [],
+    };
+  } catch {
+    return createInitialState();
+  }
 }
 
 function classNames(...names) {
@@ -826,17 +1153,61 @@ function isSupportedLanguage(code) {
   return LANGUAGES.some((language) => language.code === code);
 }
 
+function normalizeTranslationSettings(settings) {
+  const provider = TRANSLATION_PROVIDERS.some((item) => item.id === settings.translationProvider)
+    ? settings.translationProvider
+    : DEFAULT_SETTINGS.translationProvider;
+  const preset = TRANSLATION_PROVIDERS.find((item) => item.id === provider) ?? TRANSLATION_PROVIDERS[0];
+  return {
+    ...DEFAULT_SETTINGS,
+    ...settings,
+    translationProvider: provider,
+    translationApiKey: String(settings.translationApiKey ?? ''),
+    translationBaseUrl: String(settings.translationBaseUrl || preset.baseUrl || ''),
+    translationModel: String(settings.translationModel || preset.model || ''),
+  };
+}
+
+function loadLocalSettings() {
+  try {
+    const raw = localStorage.getItem('bilingual-editor:settings');
+    if (!raw) return DEFAULT_SETTINGS;
+    return normalizeTranslationSettings(JSON.parse(raw));
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+function saveLocalSettings(settings) {
+  localStorage.setItem('bilingual-editor:settings', JSON.stringify(normalizeTranslationSettings(settings)));
+}
+
+function translationServiceOptions(settings) {
+  const normalized = normalizeTranslationSettings(settings);
+  return {
+    provider: normalized.translationProvider,
+    apiKey: normalized.translationApiKey.trim(),
+    baseUrl: normalized.translationBaseUrl.trim(),
+    model: normalized.translationModel.trim(),
+  };
+}
+
+function translationProviderLabel(settings) {
+  const normalized = normalizeTranslationSettings(settings);
+  return TRANSLATION_PROVIDERS.find((item) => item.id === normalized.translationProvider)?.label ?? '翻译服务';
+}
+
 function settingsFromProfile(profile, fallbackSettings) {
   const sourceLang = isSupportedLanguage(profile.default_source_lang) ? profile.default_source_lang : fallbackSettings.sourceLang;
   const targetLang = isSupportedLanguage(profile.default_target_lang) ? profile.default_target_lang : fallbackSettings.targetLang;
   const profileHue = Number(profile.theme_hue);
-  return {
+  return normalizeTranslationSettings({
     ...fallbackSettings,
     accentHue: Number.isFinite(profileHue) ? profileHue : fallbackSettings.accentHue,
     sourceLang,
     targetLang,
     autoDetect: sourceLang === 'auto' && targetLang === 'auto',
-  };
+  });
 }
 
 function defaultProfilePayload(user, settings) {
@@ -880,6 +1251,37 @@ function documentListTitle(row) {
   return row.title || row.file_name || 'Untitled document';
 }
 
+function cloneComments(comments) {
+  try {
+    return JSON.parse(JSON.stringify(Array.isArray(comments) ? comments : []));
+  } catch {
+    return [];
+  }
+}
+
+function documentHistoryKey(item) {
+  return [
+    item.fileName || '',
+    item.format || '',
+    item.sourceText?.length ?? 0,
+    item.sourceText?.slice(0, 120) ?? '',
+  ].join('::');
+}
+
+function documentHistorySnapshot(item) {
+  return {
+    id: crypto.randomUUID(),
+    fileName: item.fileName || 'untitled.txt',
+    format: item.format || 'txt',
+    savedAt: item.savedAt ?? null,
+    sourceText: item.sourceText ?? '',
+    targetText: item.targetText ?? '',
+    lastEdited: item.lastEdited ?? null,
+    comments: cloneComments(item.comments),
+    rememberedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+  };
+}
+
 function normalizePresenceUsers(presenceState) {
   const users = Object.values(presenceState)
     .flat()
@@ -889,20 +1291,30 @@ function normalizePresenceUsers(presenceState) {
 }
 
 function App() {
-  const [doc, setDoc] = useState(createInitialState);
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [doc, setDoc] = useState(loadInitialState);
+  const [settings, setSettings] = useState(loadLocalSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeSide, setActiveSide] = useState('source');
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [search, setSearch] = useState('');
   const [syncMode, setSyncMode] = useState('auto');
-  const [status, setStatus] = useState('已加载示例文档');
+  const [realtimePreview, setRealtimePreview] = useState({ source: null, target: null });
+  const [status, setStatus] = useState(() => {
+    try {
+      return localStorage.getItem('bilingual-editor:last-document')
+        ? '已恢复浏览器本地保存'
+        : '已加载示例文档';
+    } catch {
+      return '已加载示例文档';
+    }
+  });
   const [leftWidth, setLeftWidth] = useState(50);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [recentDocs, setRecentDocs] = useState([]);
   const [undoSnapshot, setUndoSnapshot] = useState(null);
   const [selectedCommentText, setSelectedCommentText] = useState({ side: null, text: '', rect: null });
   const [draftComment, setDraftComment] = useState(null);
-  const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
+  const [authReady, setAuthReady] = useState(true);
   const [session, setSession] = useState(null);
   const [authMode, setAuthMode] = useState('signin');
   const [authForm, setAuthForm] = useState({ email: '', password: '', displayName: '' });
@@ -912,7 +1324,7 @@ function App() {
   const [cloudDocs, setCloudDocs] = useState([]);
   const [selectedDocId, setSelectedDocId] = useState(null);
   const [cloudLoading, setCloudLoading] = useState(false);
-  const [cloudStatus, setCloudStatus] = useState(isSupabaseConfigured ? '等待登录' : '本地模式');
+  const [cloudStatus, setCloudStatus] = useState('本地模式');
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [shareEmail, setShareEmail] = useState('');
   const [shareStatus, setShareStatus] = useState('');
@@ -926,8 +1338,12 @@ function App() {
   const llmTimerRef = useRef(null);
   const llmRequestRef = useRef(0);
   const pendingLlmRefinementRef = useRef(null);
+  const editSessionRef = useRef(null);
   const initialTranslationRef = useRef(null);
+  const initialTranslationInFlightRef = useRef(false);
   const remoteUpdateRef = useRef(false);
+  const realtimeMirrorRef = useRef({ source: {}, target: {} });
+  const llmBackoffUntilRef = useRef(0);
 
   const stats = useMemo(() => {
     const unresolved = doc.comments.filter((item) => !item.resolved).length;
@@ -940,12 +1356,49 @@ function App() {
   const paneLanguages = useMemo(() => resolvePaneLanguages(doc, settings), [doc, settings]);
 
   const visibleComments = doc.comments;
+  const visibleRecentDocs = useMemo(() => {
+    const currentKey = documentHistoryKey(doc);
+    return recentDocs.filter((item) => documentHistoryKey(item) !== currentKey);
+  }, [doc, recentDocs]);
   const currentUser = session?.user ?? null;
-  const cloudEnabled = isSupabaseConfigured && Boolean(currentUser);
+  const cloudEnabled = CLOUD_FEATURES_ENABLED && isSupabaseConfigured && Boolean(currentUser);
   const userDisplayName = profile?.display_name || currentUser?.user_metadata?.display_name || DEFAULT_DISPLAY_NAME;
+  const displaySourceText = realtimePreview.source ?? doc.sourceText;
+  const displayTargetText = realtimePreview.target ?? doc.targetText;
 
   function pushUndoSnapshot(snapshot = doc) {
     setUndoSnapshot(snapshot);
+  }
+
+  function rememberRecentDocument(item = doc) {
+    if (!item?.sourceText?.trim() && !item?.targetText?.trim()) return;
+    const snapshot = documentHistorySnapshot(item);
+    const snapshotKey = documentHistoryKey(snapshot);
+    setRecentDocs((current) => [
+      snapshot,
+      ...current.filter((existing) => documentHistoryKey(existing) !== snapshotKey),
+    ].slice(0, 16));
+  }
+
+  function openRecentDocument(documentId) {
+    const nextDoc = recentDocs.find((item) => item.id === documentId);
+    if (!nextDoc) return;
+    pushUndoSnapshot();
+    rememberRecentDocument(doc);
+    clearPendingSync();
+    setRecentDocs((current) => current.filter((item) => item.id !== documentId));
+    setSelectedDocId(null);
+    setDoc({
+      fileName: nextDoc.fileName,
+      format: nextDoc.format,
+      savedAt: nextDoc.savedAt,
+      sourceText: nextDoc.sourceText,
+      targetText: nextDoc.targetText,
+      lastEdited: nextDoc.lastEdited,
+      comments: cloneComments(nextDoc.comments),
+    });
+    setActiveSide('source');
+    setStatus(`已打开之前文件 ${nextDoc.fileName}`);
   }
 
   function updateCommentSelection(side, text, rect = null) {
@@ -1022,7 +1475,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) return undefined;
+    if (!CLOUD_FEATURES_ENABLED || !isSupabaseConfigured) return undefined;
     let mounted = true;
 
     supabase.auth.getSession().then(({ data }) => {
@@ -1124,17 +1577,37 @@ function App() {
 
   useEffect(() => {
     if (selectedDocId) return;
+    if (doc.savedAt) return;
     if (doc.fileName !== 'sample-paper.tex' || doc.targetText.trim()) return;
-    const key = `${doc.fileName}:${doc.sourceText}`;
+    const key = `${doc.fileName}:${doc.sourceText}:${settings.translationProvider}:${settings.translationApiKey ? 'key' : 'no-key'}:${settings.translationModel}:${settings.translationBaseUrl}`;
     if (initialTranslationRef.current === key) return;
     initialTranslationRef.current = key;
     translateInitialDocument(doc);
-  }, [selectedDocId, doc.fileName, doc.sourceText, doc.targetText, settings.sourceLang, settings.targetLang]);
+  }, [
+    selectedDocId,
+    doc.fileName,
+    doc.sourceText,
+    doc.targetText,
+    settings.sourceLang,
+    settings.targetLang,
+    settings.translationProvider,
+    settings.translationApiKey,
+    settings.translationModel,
+    settings.translationBaseUrl,
+  ]);
 
   async function translateInitialDocument(baseDoc, options = {}) {
+    clearPendingSync();
     const requestId = llmRequestRef.current + 1;
     llmRequestRef.current = requestId;
-    setStatus(`正在用 Kimi 分段翻译 ${baseDoc.fileName}`);
+    const service = translationServiceOptions(settings);
+    const serviceLabel = translationProviderLabel(settings);
+    if (!service.apiKey) {
+      setStatus(`请先在设置里输入 ${serviceLabel} API Key，再开始翻译`);
+      return baseDoc;
+    }
+    initialTranslationInFlightRef.current = true;
+    setStatus(`正在用 ${serviceLabel} 分段翻译 ${baseDoc.fileName}`);
 
     let finalDoc = baseDoc;
     try {
@@ -1143,11 +1616,17 @@ function App() {
         'source',
         settings,
         baseDoc.format,
-        'import'
+        'import',
+        (done, total, detail = '') => {
+          if (llmRequestRef.current === requestId) {
+            setStatus(detail || `正在用 ${serviceLabel} 分段翻译 ${baseDoc.fileName}：${done}/${total}`);
+          }
+        }
       );
       finalDoc = {
         ...baseDoc,
-        targetText: llmTargetText ?? translateForSync(baseDoc.sourceText, 'source', settings, ''),
+        targetText: llmTargetText ?? '',
+        comments: baseDoc.comments,
         lastEdited: null,
       };
       if (llmRequestRef.current !== requestId) return null;
@@ -1155,11 +1634,12 @@ function App() {
         if (current.fileName !== baseDoc.fileName || current.sourceText !== baseDoc.sourceText) return current;
         return finalDoc;
       });
-      setStatus(`已用 Kimi 完成 ${baseDoc.fileName} 分段翻译`);
+      setStatus(`已用 ${serviceLabel} 完成 ${baseDoc.fileName} 分段翻译`);
     } catch (error) {
       finalDoc = {
         ...baseDoc,
-        targetText: translateForSync(baseDoc.sourceText, 'source', settings, ''),
+        targetText: baseDoc.targetText ?? '',
+        comments: baseDoc.comments,
         lastEdited: null,
       };
       if (llmRequestRef.current !== requestId) return null;
@@ -1167,7 +1647,9 @@ function App() {
         if (current.fileName !== baseDoc.fileName || current.sourceText !== baseDoc.sourceText) return current;
         return finalDoc;
       });
-      setStatus(`Kimi 初次翻译失败，已回退本地规则：${error.message}`);
+      setStatus(`${serviceLabel} 初次翻译失败，未写入译文：${error.message}`);
+    } finally {
+      initialTranslationInFlightRef.current = false;
     }
 
     if (options.createCloudAfter && cloudEnabled) {
@@ -1176,58 +1658,291 @@ function App() {
     return finalDoc;
   }
 
-  function queueLlmRefinement(side, activeText, passiveText, previousActiveText, format, nextSettings = settings) {
-    if (syncMode !== 'auto') return;
-    const jobs = changedBlockJobs(previousActiveText, activeText, passiveText);
+  function clearPendingSync() {
+    realtimeMirrorRef.current = { source: {}, target: {} };
+    pendingLlmRefinementRef.current = null;
+    editSessionRef.current = null;
+    window.clearTimeout(llmTimerRef.current);
+    setRealtimePreview({ source: null, target: null });
+  }
+
+  async function translateCommentsForSide(comments, side, format) {
+    if (!Array.isArray(comments) || !comments.length) return [];
+    const otherSide = side === 'source' ? 'target' : 'source';
+    const nextComments = comments.map((comment) => {
+      const active = comment[side] ?? legacyCommentSide(comment, side);
+      const existingOther = comment[otherSide] ?? legacyCommentSide(comment, otherSide);
+      return {
+        ...comment,
+        [side]: active,
+        [otherSide]: {
+          ...existingOther,
+        },
+      };
+    });
+
+    const pieces = [];
+    nextComments.forEach((comment, index) => {
+      const active = comment[side] ?? {};
+      if (active.quote) pieces.push({ index, field: 'quote', text: active.quote });
+      if (active.text) pieces.push({ index, field: 'text', text: active.text });
+    });
+    if (!pieces.length) return nextComments;
+
+    const direction = resolveSideDirection(pieces.map((item) => item.text).join('\n'), side, settings);
+    if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) return nextComments;
+
+    for (const piece of pieces) {
+      const protectedPiece = maskInlineProtectedSyntax(piece.text);
+      const [translation] = await requestLlmTranslations(
+        [protectedPiece.text],
+        direction,
+        { format, mode: 'comment', ...translationServiceOptions(settings) }
+      );
+      const restored = restoreInlineProtectedSyntax(translation, protectedPiece.tokens).trim();
+      if (restored) nextComments[piece.index][otherSide][piece.field] = restored;
+    }
+
+    return nextComments;
+  }
+
+  function pairCommentsLocally(comments, side) {
+    if (!Array.isArray(comments) || !comments.length) return [];
+    const otherSide = side === 'source' ? 'target' : 'source';
+    return comments.map((comment) => {
+      const active = comment[side] ?? legacyCommentSide(comment, side);
+      const existingOther = comment[otherSide] ?? legacyCommentSide(comment, otherSide);
+      return {
+        ...comment,
+        [side]: active,
+        [otherSide]: {
+          ...existingOther,
+          quote: active.quote ? makePairedCommentText(active.quote, side, 'quote') || existingOther.quote : existingOther.quote,
+          text: active.text ? makePairedCommentText(active.text, side, 'text') || existingOther.text : existingOther.text,
+        },
+      };
+    });
+  }
+
+  function recordPendingSync(side, activeText, passiveText, previousActiveText, format, nextSettings = settings, options = {}) {
+    if (!ENABLE_IDLE_LLM_REFINEMENT) return;
+    const rendered = Boolean(options.rendered);
+    const existingPending = pendingSideJob(pendingLlmRefinementRef.current, side);
+    const existingSession = editSessionRef.current;
+    const sameSession = existingSession
+      && existingSession.side === side
+      && existingSession.rendered === rendered
+      && existingSession.format === format;
+    const session = sameSession
+      ? existingSession
+      : {
+        side,
+        rendered,
+        format,
+        baseActiveText: existingPending?.baseActiveText ?? previousActiveText,
+        basePassiveText: existingPending?.passiveText ?? passiveText,
+      };
+
+    session.activeText = activeText;
+    session.settings = { ...nextSettings };
+    editSessionRef.current = session;
+
+    const jobs = rendered
+      ? changedRenderedBlockJobs(session.baseActiveText, activeText, session.basePassiveText)
+      : changedBlockJobs(session.baseActiveText, activeText, session.basePassiveText);
     if (!jobs.length) return;
 
-    pendingLlmRefinementRef.current = {
+    const sideJob = {
       side,
       activeText,
-      passiveText,
+      baseActiveText: session.baseActiveText,
+      passiveText: session.basePassiveText,
       jobs,
       format,
       settings: { ...nextSettings },
+      rendered,
+      comments: doc.comments,
     };
+    pendingLlmRefinementRef.current = upsertPendingSide(
+      pendingLlmRefinementRef.current,
+      sideJob,
+      doc.comments
+    );
     window.clearTimeout(llmTimerRef.current);
-    llmTimerRef.current = window.setTimeout(runQueuedLlmRefinement, 3000);
+    if (syncMode === 'auto') {
+      llmTimerRef.current = window.setTimeout(() => runQueuedLlmRefinement({ manual: false }), 3000);
+      setStatus('已记录修改，停止 3 秒后同步');
+    } else {
+      setStatus('已记录修改，点击同步后更新另一侧');
+    }
   }
 
-  async function runQueuedLlmRefinement() {
-    const job = pendingLlmRefinementRef.current;
-    if (!job) return;
+  function recordPendingCommentGuidance(side, quote, text, comment) {
+    if (!ENABLE_IDLE_LLM_REFINEMENT) return false;
+    const existing = pendingLlmRefinementRef.current;
+    const existingSide = pendingSideJob(existing, side);
+    const canMergeExisting = existing
+      && existingSide
+      && existingSide.format === doc.format
+      && !existingSide.rendered;
+    const activeText = canMergeExisting
+      ? existingSide.activeText
+      : (side === 'source' ? doc.sourceText : doc.targetText);
+    const passiveText = canMergeExisting
+      ? existingSide.passiveText
+      : (side === 'source' ? doc.targetText : doc.sourceText);
+    const jobs = commentGuidanceJobs(activeText, passiveText, quote, text);
+    if (!jobs.length) {
+      setStatus('已添加修改建议；未找到对应段落');
+      return false;
+    }
+
+    const comments = [
+      comment,
+      ...(existingSide?.comments ?? existing?.comments ?? doc.comments),
+    ];
+    const mergedJobs = canMergeExisting ? mergeSyncJobs(existingSide.jobs, jobs) : jobs;
+    const sideJob = {
+      side,
+      activeText,
+      baseActiveText: canMergeExisting ? existingSide.baseActiveText : activeText,
+      passiveText,
+      jobs: mergedJobs,
+      format: doc.format,
+      settings: { ...settings },
+      rendered: false,
+      comments,
+    };
+    pendingLlmRefinementRef.current = upsertPendingSide(existing, sideJob, comments);
+    editSessionRef.current = {
+      side,
+      rendered: false,
+      format: doc.format,
+      baseActiveText: canMergeExisting ? existingSide.baseActiveText : activeText,
+      basePassiveText: passiveText,
+      activeText,
+      settings: { ...settings },
+    };
+    window.clearTimeout(llmTimerRef.current);
+    if (syncMode === 'auto') {
+      llmTimerRef.current = window.setTimeout(() => runQueuedLlmRefinement({ manual: false }), 3000);
+    }
+    return true;
+  }
+
+  async function runQueuedLlmRefinement({ manual = false } = {}) {
+    if (manual) {
+      window.clearTimeout(llmTimerRef.current);
+    }
+    const pending = pendingLlmRefinementRef.current;
+    const sideJobs = pendingSideJobs(pending);
+    if (!sideJobs.length) {
+      if (manual) setStatus('没有待同步的修改');
+      return;
+    }
+    if (initialTranslationInFlightRef.current) {
+      if (manual) setStatus('正在分段翻译，完成后再同步修改');
+      return;
+    }
+    if (Date.now() < llmBackoffUntilRef.current) {
+      if (manual) setStatus('翻译服务刚刚限速，稍后再同步');
+      return;
+    }
+    const primarySettings = sideJobs[0].settings;
+    if (!translationServiceOptions(primarySettings).apiKey) {
+      setSettingsOpen(true);
+      setStatus(`已记录修改，请先在设置里输入 ${translationProviderLabel(primarySettings)} API Key`);
+      return;
+    }
     pendingLlmRefinementRef.current = null;
     const requestId = llmRequestRef.current + 1;
     llmRequestRef.current = requestId;
-    setStatus('正在用 Kimi 直译改动段落...');
+    const serviceLabel = translationProviderLabel(primarySettings);
+    setStatus(`正在用 ${serviceLabel} 更新双语段落...`);
 
     try {
-      const replacements = await translateChangedBlocksWithLlm(
-        job.jobs,
-        job.side,
-        job.settings,
-        job.format
+      const processedCommentIds = new Set();
+      sideJobs.forEach((sideJob) => {
+        processedCommentIdsForJobs(sideJob.comments ?? pending?.comments ?? doc.comments, sideJob.side, sideJob.jobs)
+          .forEach((id) => processedCommentIds.add(id));
+      });
+      const activeIndexes = {
+        source: activeJobIndexes(sideJobs, 'source'),
+        target: activeJobIndexes(sideJobs, 'target'),
+      };
+      const syncResults = await Promise.all(sideJobs.map(async (sideJob) => ({
+        job: sideJob,
+        result: await syncChangedBlocksWithLlm(
+          sideJob.jobs,
+          sideJob.side,
+          sideJob.settings,
+          sideJob.format,
+          sideJob.comments ?? pending?.comments ?? doc.comments
+        ),
+      })));
+      const hasReplacements = syncResults.some(({ result }) =>
+        result.activeReplacements.size || result.passiveReplacements.size
       );
-      if (llmRequestRef.current !== requestId || !replacements.size) return;
+      if (llmRequestRef.current !== requestId || !hasReplacements) return;
 
       setDoc((current) => {
-        const activeText = job.side === 'source' ? current.sourceText : current.targetText;
-        if (activeText !== job.activeText) return current;
+        let nextSourceText = current.sourceText;
+        let nextTargetText = current.targetText;
+        let anyApplied = false;
 
+        syncResults.forEach(({ job: sideJob, result }) => {
+          const currentActiveText = sideJob.side === 'source' ? nextSourceText : nextTargetText;
+          const comparableActiveText = sideJob.rendered
+            ? serializeTextForRenderedEditing(currentActiveText, current.format)
+            : currentActiveText;
+          if (comparableActiveText !== sideJob.activeText && comparableActiveText !== sideJob.baseActiveText) {
+            return;
+          }
+
+          const nextActiveText = result.activeReplacements.size
+            ? applySyncReplacements(sideJob.activeText, result.activeReplacements, sideJob.rendered, current.format)
+            : sideJob.activeText;
+          const passiveSide = sideJob.side === 'source' ? 'target' : 'source';
+          const passiveReplacements = new Map(
+            Array.from(result.passiveReplacements.entries())
+              .filter(([index]) => !activeIndexes[passiveSide].has(index))
+          );
+
+          if (sideJob.side === 'source') {
+            nextSourceText = nextActiveText;
+            nextTargetText = applySyncReplacements(nextTargetText, passiveReplacements, sideJob.rendered, current.format);
+          } else {
+            nextTargetText = nextActiveText;
+            nextSourceText = applySyncReplacements(nextSourceText, passiveReplacements, sideJob.rendered, current.format);
+          }
+          anyApplied = true;
+        });
+
+        if (!anyApplied) return current;
         return {
           ...current,
           savedAt: null,
-          targetText: job.side === 'source'
-            ? replaceSyncBlocks(current.targetText, replacements)
-            : current.targetText,
-          sourceText: job.side === 'target'
-            ? replaceSyncBlocks(current.sourceText, replacements)
-            : current.sourceText,
+          sourceText: nextSourceText,
+          targetText: nextTargetText,
+          comments: processedCommentIds.size
+            ? current.comments.filter((comment) => !processedCommentIds.has(comment.id))
+            : current.comments,
         };
       });
-      setStatus('已用 Kimi 更新改动段落');
+      sideJobs.forEach((sideJob) => {
+        realtimeMirrorRef.current[sideJob.side] = {};
+      });
+      editSessionRef.current = null;
+      setRealtimePreview({ source: null, target: null });
+      setStatus(processedCommentIds.size
+        ? `已用 ${serviceLabel} 更新双语段落，并移除已处理批注`
+        : `已用 ${serviceLabel} 更新双语段落`);
     } catch (error) {
-      setStatus(`Kimi 暂不可用，已保留本地同步：${error.message}`);
+      pendingLlmRefinementRef.current = pending;
+      if (/429|Too Many Requests/i.test(error.message || '')) {
+        llmBackoffUntilRef.current = Date.now() + LLM_BACKOFF_MS;
+      }
+      setStatus(`${serviceLabel} 暂不可用，已保留待同步修改：${error.message}`);
     }
   }
 
@@ -1375,6 +2090,8 @@ function App() {
 
   async function signOut() {
     await supabase.auth.signOut();
+    rememberRecentDocument(doc);
+    clearPendingSync();
     setDoc(createInitialState());
     setStatus('已退出登录');
   }
@@ -1414,6 +2131,8 @@ function App() {
     }
 
     remoteUpdateRef.current = true;
+    rememberRecentDocument(doc);
+    clearPendingSync();
     setSelectedDocId(data.id);
     setDoc(documentFromRow(data));
     setStatus(`已打开云端文档 ${data.file_name}`);
@@ -1510,6 +2229,8 @@ function App() {
     };
 
     pushUndoSnapshot();
+    rememberRecentDocument(doc);
+    clearPendingSync();
     setDoc(nextDoc);
     setActiveSide('source');
     await translateInitialDocument(nextDoc, { createCloudAfter: cloudEnabled });
@@ -1517,45 +2238,34 @@ function App() {
   }
 
   function updateText(side, value, options = {}) {
-    const shouldSync = options.sync !== false && syncMode === 'auto';
     const activeBaseText = side === 'source' ? doc.sourceText : doc.targetText;
     const passiveBaseText = side === 'source' ? doc.targetText : doc.sourceText;
     const previousActiveText = options.rendered ? serializeTextForRenderedEditing(activeBaseText, doc.format) : activeBaseText;
     const previousPassiveText = options.rendered ? serializeTextForRenderedEditing(passiveBaseText, doc.format) : passiveBaseText;
+    if (options.rendered) {
+      setRealtimePreview((current) => ({ ...current, source: null, target: null }));
+    }
     if (options.pushUndo !== false) {
       pushUndoSnapshot();
     }
     setDoc((current) => {
       if (side === 'source') {
-        const currentActive = options.rendered ? serializeTextForRenderedEditing(current.sourceText, current.format) : current.sourceText;
-        const currentPassive = options.rendered ? serializeTextForRenderedEditing(current.targetText, current.format) : current.targetText;
         return {
           ...current,
           savedAt: null,
           sourceText: value,
-          targetText: shouldSync
-            ? localRealtimePassiveText(currentActive, value, currentPassive, 'source', settings)
-            : current.targetText,
           lastEdited: 'source',
         };
       }
-      const currentActive = options.rendered ? serializeTextForRenderedEditing(current.targetText, current.format) : current.targetText;
-      const currentPassive = options.rendered ? serializeTextForRenderedEditing(current.sourceText, current.format) : current.sourceText;
       return {
         ...current,
         savedAt: null,
         targetText: value,
-        sourceText: shouldSync
-          ? localRealtimePassiveText(currentActive, value, currentPassive, 'target', settings)
-          : current.sourceText,
         lastEdited: 'target',
       };
     });
-    if (shouldSync) {
-      queueLlmRefinement(side, value, previousPassiveText, previousActiveText, doc.format);
-    }
+    recordPendingSync(side, value, previousPassiveText, previousActiveText, doc.format, settings, { rendered: options.rendered });
     setActiveSide(side);
-    setStatus(syncMode === 'auto' ? '已同步另一侧文档' : '已修改，自动同步暂停');
   }
 
   function previewText(side, value, options = {}) {
@@ -1563,35 +2273,28 @@ function App() {
     const passiveBaseText = side === 'source' ? doc.targetText : doc.sourceText;
     const previousActiveText = options.rendered ? serializeTextForRenderedEditing(activeBaseText, doc.format) : activeBaseText;
     const previousPassiveText = options.rendered ? serializeTextForRenderedEditing(passiveBaseText, doc.format) : passiveBaseText;
+    if (options.rendered) {
+      recordPendingSync(side, value, previousPassiveText, previousActiveText, doc.format, settings, { rendered: options.rendered });
+      setActiveSide(side);
+      return;
+    }
     setDoc((current) => {
       if (side === 'source') {
-        const currentActive = options.rendered ? serializeTextForRenderedEditing(current.sourceText, current.format) : current.sourceText;
-        const currentPassive = options.rendered ? serializeTextForRenderedEditing(current.targetText, current.format) : current.targetText;
         return {
           ...current,
           savedAt: null,
-          sourceText: value,
-          targetText: syncMode === 'auto'
-            ? localRealtimePassiveText(currentActive, value, currentPassive, 'source', settings)
-            : current.targetText,
+          sourceText: options.rendered ? current.sourceText : value,
           lastEdited: 'source',
         };
       }
-      const currentActive = options.rendered ? serializeTextForRenderedEditing(current.targetText, current.format) : current.targetText;
-      const currentPassive = options.rendered ? serializeTextForRenderedEditing(current.sourceText, current.format) : current.sourceText;
       return {
         ...current,
         savedAt: null,
-        targetText: value,
-        sourceText: syncMode === 'auto'
-          ? localRealtimePassiveText(currentActive, value, currentPassive, 'target', settings)
-          : current.sourceText,
+        targetText: options.rendered ? current.targetText : value,
         lastEdited: 'target',
       };
     });
-    if (syncMode === 'auto') {
-      queueLlmRefinement(side, value, previousPassiveText, previousActiveText, doc.format);
-    }
+    recordPendingSync(side, value, previousPassiveText, previousActiveText, doc.format, settings, { rendered: options.rendered });
     setActiveSide(side);
   }
 
@@ -1616,30 +2319,27 @@ function App() {
       return;
     }
     const side = draftComment.side;
-    const passiveText = side === 'source' ? doc.targetText : doc.sourceText;
     const quote = draftComment.quote;
-    const pairedQuote = makePairedCommentText(quote, side, 'quote');
-    const pairedText = makePairedCommentText(text, side, 'text');
+    const nextComment = {
+      id: crypto.randomUUID(),
+      source: side === 'source' ? { text, quote } : null,
+      target: side === 'target' ? { text, quote } : null,
+      resolved: false,
+      createdAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+    };
     pushUndoSnapshot();
     setDoc((current) => ({
       ...current,
       comments: [
-        {
-          id: crypto.randomUUID(),
-          source: side === 'source'
-            ? { text, quote }
-            : { text: pairedText, quote: pairedQuote || passiveText.slice(0, 80) },
-          target: side === 'target'
-            ? { text, quote }
-            : { text: pairedText, quote: pairedQuote || passiveText.slice(0, 80) },
-          resolved: false,
-          createdAt: new Date().toLocaleString('zh-CN', { hour12: false }),
-        },
+        nextComment,
         ...current.comments,
       ],
     }));
+    const willSync = recordPendingCommentGuidance(side, quote, text, nextComment);
     setDraftComment(null);
-    setStatus('已添加批注');
+    if (willSync) {
+      setStatus(syncMode === 'auto' ? '已添加修改建议，停止 3 秒后同步' : '已添加修改建议，点击同步后处理');
+    }
   }
 
   function cancelCommentDraft() {
@@ -1665,28 +2365,13 @@ function App() {
     }));
   }
 
-  function syncAll(direction) {
-    pushUndoSnapshot();
-    setDoc((current) => ({
-      ...current,
-      savedAt: null,
-      targetText: direction === 'source'
-        ? translateForSync(current.sourceText, 'source', settings, current.targetText)
-        : current.targetText,
-      sourceText: direction === 'target'
-        ? translateForSync(current.targetText, 'target', settings, current.sourceText)
-        : current.sourceText,
-      lastEdited: direction,
-    }));
-    setStatus(direction === 'source' ? '已按左侧文档重建右侧' : '已按右侧文档重建左侧');
-  }
-
   function applySettings(nextSettings) {
-    const normalizedSettings = {
+    const normalizedSettings = normalizeTranslationSettings({
       ...nextSettings,
       autoDetect: nextSettings.sourceLang === 'auto' && nextSettings.targetLang === 'auto',
-    };
+    });
     setSettings(normalizedSettings);
+    saveLocalSettings(normalizedSettings);
     scheduleProfileSave(normalizedSettings);
     setStatus('已更新设置');
   }
@@ -1704,13 +2389,28 @@ function App() {
       sourceLang: settings.targetLang,
       targetLang: settings.sourceLang,
     };
-    const normalizedSettings = {
+    const normalizedSettings = normalizeTranslationSettings({
       ...nextSettings,
       autoDetect: nextSettings.sourceLang === 'auto' && nextSettings.targetLang === 'auto',
-    };
+    });
     setSettings(normalizedSettings);
+    saveLocalSettings(normalizedSettings);
     scheduleProfileSave(normalizedSettings);
     setStatus('已互换翻译语言');
+  }
+
+  function toggleSyncMode() {
+    setSyncMode((current) => {
+      const next = current === 'auto' ? 'manual' : 'auto';
+      window.clearTimeout(llmTimerRef.current);
+      if (next === 'auto' && pendingLlmRefinementRef.current) {
+        llmTimerRef.current = window.setTimeout(() => runQueuedLlmRefinement({ manual: false }), 3000);
+        setStatus('自动同步已开启，待同步修改将在 3 秒后更新');
+      } else {
+        setStatus(next === 'auto' ? '自动同步已开启' : '自动同步已暂停，可点击同步按钮手动更新');
+      }
+      return next;
+    });
   }
 
   async function saveSnapshot() {
@@ -1728,7 +2428,7 @@ function App() {
     const snapshot = { ...doc, savedAt };
     localStorage.setItem('bilingual-editor:last-document', JSON.stringify(snapshot));
     setDoc(snapshot);
-    setStatus('已保存到浏览器本地');
+    setStatus(`已保存到浏览器本地缓存：${savedAt}`);
   }
 
   function undoLastChange() {
@@ -1783,18 +2483,18 @@ function App() {
 
   const outline = extractOutline(doc.sourceText);
   const searchState = useMemo(
-    () => getSearchState(doc.sourceText, doc.targetText, search),
-    [doc.sourceText, doc.targetText, search]
+    () => getSearchState(displaySourceText, displayTargetText, search),
+    [displaySourceText, displayTargetText, search]
   );
   const matchCount = searchState.query ? searchState.totalMatches : null;
-  const sourceCommentHighlights = getCommentHighlights(visibleComments, 'source', draftComment, doc.sourceText, doc.targetText);
-  const targetCommentHighlights = getCommentHighlights(visibleComments, 'target', draftComment, doc.sourceText, doc.targetText);
+  const sourceCommentHighlights = getCommentHighlights(visibleComments, 'source', draftComment, displaySourceText, displayTargetText);
+  const targetCommentHighlights = getCommentHighlights(visibleComments, 'target', draftComment, displaySourceText, displayTargetText);
 
   if (!authReady) {
     return <div className="loading-screen">正在连接云端...</div>;
   }
 
-  if (isSupabaseConfigured && !session) {
+  if (CLOUD_FEATURES_ENABLED && isSupabaseConfigured && !session) {
     return (
       <AuthScreen
         mode={authMode}
@@ -1841,7 +2541,6 @@ function App() {
                 <Cloud size={16} />
                 <div>
                   <strong>本地模式</strong>
-                  <span>配置 Supabase 后启用注册、登录和协作。</span>
                 </div>
               </div>
             </>
@@ -1879,6 +2578,23 @@ function App() {
             </div>
           </div>
         </div>
+
+        {visibleRecentDocs.length > 0 && (
+          <div className="side-section">
+            <div className="section-title">之前文件</div>
+            <div className="recent-file-list">
+              {visibleRecentDocs.map((item) => (
+                <button key={item.id} onClick={() => openRecentDocument(item.id)}>
+                  <FileText size={14} />
+                  <span>
+                    <strong>{item.fileName}</strong>
+                    <em>{formatInfo(item.format).name} · {item.rememberedAt}</em>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {cloudEnabled && (
           <div className="side-section">
@@ -1961,7 +2677,7 @@ function App() {
           <div className="topbar-left">
             <div className="file-title">
               <strong>{doc.fileName}</strong>
-              <span>{doc.savedAt ? `本地保存 ${doc.savedAt}` : status}</span>
+              <span>{status}</span>
             </div>
           </div>
           <div className="toolbar">
@@ -1970,9 +2686,13 @@ function App() {
               <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索正文或译文" />
               {matchCount !== null && <em>{matchCount}</em>}
             </div>
-            <button className={classNames(syncMode === 'auto' && 'active')} onClick={() => setSyncMode(syncMode === 'auto' ? 'manual' : 'auto')}>
+            <button className={classNames(syncMode === 'auto' && 'active')} onClick={toggleSyncMode}>
               <Link2 size={16} />
               {syncMode === 'auto' ? '自动同步' : '手动同步'}
+            </button>
+            <button onClick={() => runQueuedLlmRefinement({ manual: true })} title="同步已记录的修改">
+              <Check size={16} />
+              同步
             </button>
             <div className="language-pair">
               <select
@@ -2033,7 +2753,7 @@ function App() {
               title="原文"
               side="source"
               icon={<AlignJustify size={17} />}
-              text={doc.sourceText}
+              text={displaySourceText}
               paneId="source"
               format={doc.format}
               active={activeSide === 'source'}
@@ -2058,7 +2778,7 @@ function App() {
               title="译文"
               side="target"
               icon={<Languages size={17} />}
-              text={doc.targetText}
+              text={displayTargetText}
               paneId="target"
               format={doc.format}
               active={activeSide === 'target'}
@@ -2151,7 +2871,16 @@ function DocumentPane({
   const [viewMode, setViewMode] = useState('rendered');
   const renderedRef = useRef(null);
   const renderedDirtyRef = useRef(false);
+  const renderedTextRef = useRef(text);
+  const [renderedResetKey, setRenderedResetKey] = useState(0);
   const inlineHighlights = buildInlineHighlights(commentHighlights, searchHighlights);
+
+  useEffect(() => {
+    if (renderedTextRef.current === text) return;
+    renderedTextRef.current = text;
+    renderedDirtyRef.current = false;
+    setRenderedResetKey((current) => current + 1);
+  }, [text]);
 
   function commitRenderedEdit(element = renderedRef.current) {
     if (!element || viewMode !== 'rendered') return;
@@ -2169,6 +2898,17 @@ function DocumentPane({
     if (nextText !== text.trim()) {
       onPreviewChange(nextText, { rendered: true });
     }
+  }
+
+  function handleRenderedKeyDown(event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    document.execCommand(event.shiftKey ? 'insertLineBreak' : 'insertParagraph');
+    window.requestAnimationFrame(() => {
+      if (renderedRef.current) {
+        previewRenderedEdit({ currentTarget: renderedRef.current });
+      }
+    });
   }
 
   function captureRenderedSelection() {
@@ -2235,7 +2975,7 @@ function DocumentPane({
           </div>
         ) : (
           <RenderedDocument
-            key={`${paneId}:${text}`}
+            key={`${paneId}:${renderedResetKey}`}
             ref={renderedRef}
             text={text}
             side={paneId}
@@ -2246,6 +2986,7 @@ function DocumentPane({
             editable={active}
             onFocus={onFocus}
             onInput={previewRenderedEdit}
+            onKeyDown={handleRenderedKeyDown}
             onMouseUp={captureRenderedSelection}
             onKeyUp={captureRenderedSelection}
             onBlur={(event) => commitRenderedEdit(event.currentTarget)}
@@ -2375,6 +3116,15 @@ function SettingsPanel({ settings, cloudEnabled, displayName, profileStatus, onC
     onChange({ ...settings, ...patch });
   }
 
+  function updateProvider(providerId) {
+    const preset = TRANSLATION_PROVIDERS.find((item) => item.id === providerId) ?? TRANSLATION_PROVIDERS[0];
+    update({
+      translationProvider: providerId,
+      translationBaseUrl: preset.baseUrl,
+      translationModel: preset.model,
+    });
+  }
+
   return (
     <div className="settings-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="settings-panel" role="dialog" aria-modal="true" aria-label="设置" onMouseDown={(event) => event.stopPropagation()}>
@@ -2461,15 +3211,65 @@ function SettingsPanel({ settings, cloudEnabled, displayName, profileStatus, onC
         </div>
 
         <p className="settings-note">
-          中英术语层使用 CC-CEDICT 公开词典子集，按 CC BY-SA 4.0 授权。
+          翻译、同步、润色和批注处理只调用你配置的大模型接口；未配置 Key 时不会自动生成译文。
         </p>
+
+        <div className="settings-section">
+          <label className="settings-label">翻译服务</label>
+          <div className="settings-grid">
+            <label>
+              <span>服务商</span>
+              <select
+                value={settings.translationProvider}
+                onChange={(event) => updateProvider(event.target.value)}
+              >
+                {TRANSLATION_PROVIDERS.map((provider) => (
+                  <option key={provider.id} value={provider.id}>{provider.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <span>模型</span>
+              <input
+                value={settings.translationModel}
+                onChange={(event) => update({ translationModel: event.target.value })}
+                placeholder={settings.translationProvider === 'deepseek' ? 'deepseek-chat' : 'moonshotai/kimi-k2.6'}
+              />
+            </label>
+          </div>
+
+          <label className="settings-field">
+            <span>API Key</span>
+            <input
+              type="password"
+                value={settings.translationApiKey}
+                onChange={(event) => update({ translationApiKey: event.target.value })}
+                placeholder="请输入你自己的 API Key"
+                autoComplete="off"
+              />
+          </label>
+
+          <label className="settings-field">
+            <span>接口地址</span>
+            <input
+              value={settings.translationBaseUrl}
+              onChange={(event) => update({ translationBaseUrl: event.target.value })}
+              placeholder="https://api.deepseek.com/v1/chat/completions"
+            />
+          </label>
+
+          <p className="settings-note">
+            必须输入你自己的 API Key 才会调用翻译服务。Key 只保存在当前浏览器本地，用于通过本站后端代理请求兼容 OpenAI Chat Completions 的翻译接口。
+          </p>
+        </div>
 
       </section>
     </div>
   );
 }
 
-const RenderedDocument = React.forwardRef(function RenderedDocument({
+const RenderedDocument = React.memo(React.forwardRef(function RenderedDocument({
   text,
   side,
   commentHighlights = [],
@@ -2479,6 +3279,7 @@ const RenderedDocument = React.forwardRef(function RenderedDocument({
   editable = false,
   onFocus,
   onInput,
+  onKeyDown,
   onBlur,
 }, ref) {
   const blocks = renderBlocks(text);
@@ -2502,6 +3303,7 @@ const RenderedDocument = React.forwardRef(function RenderedDocument({
       spellCheck
       onFocus={onFocus}
       onInput={onInput}
+      onKeyDown={onKeyDown}
       onBlur={onBlur}
       role={editable ? 'textbox' : undefined}
       aria-multiline={editable ? 'true' : undefined}
@@ -2529,31 +3331,54 @@ const RenderedDocument = React.forwardRef(function RenderedDocument({
       })}
     </div>
   );
+}), (previous, next) => {
+  if (!previous.editable && !next.editable) return false;
+  return previous.editable === next.editable
+    && previous.text === next.text
+    && previous.side === next.side;
 });
 
 function serializeRenderedDocument(root, format) {
   const blocks = Array.from(root.children)
-    .map((element) => {
-      const text = element.innerText.replace(/\u00a0/g, ' ').trim();
-      if (!text) return '';
-
-      if (element.matches('h2')) {
-        return serializeRenderedBlock('h1', text, format);
-      }
-
-      if (element.matches('h3')) {
-        return serializeRenderedBlock('h2', text, format);
-      }
-
-      if (element.matches('pre')) {
-        return serializeRenderedBlock('equation', text, format);
-      }
-
-      return text;
-    })
+    .flatMap((element) => serializeRenderedElement(element, format))
     .filter(Boolean);
 
-  return blocks.length ? blocks.join('\n\n') : root.innerText.trim();
+  return blocks.length ? blocks.join('\n\n') : renderedNodeText(root).trim();
+}
+
+function serializeRenderedElement(element, format) {
+  const text = renderedNodeText(element).trim();
+  if (!text) return [];
+
+  if (element.matches('h2')) {
+    return [serializeRenderedBlock('h1', text, format)];
+  }
+
+  if (element.matches('h3')) {
+    return [serializeRenderedBlock('h2', text, format)];
+  }
+
+  if (element.matches('pre')) {
+    return [serializeRenderedBlock('equation', text, format)];
+  }
+
+  return text
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+}
+
+function renderedNodeText(node) {
+  if (!node) return '';
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent.replace(/\u00a0/g, ' ');
+  if (node.nodeType !== Node.ELEMENT_NODE) return '';
+  if (node.tagName === 'BR') return '\n';
+
+  const childText = Array.from(node.childNodes).map(renderedNodeText).join('');
+  if (/^(DIV|P|H1|H2|H3|H4|H5|H6|PRE|LI)$/i.test(node.tagName)) {
+    return `${childText}\n`;
+  }
+  return childText;
 }
 
 function serializeTextForRenderedEditing(text, format) {
@@ -2691,11 +3516,8 @@ function emptySearchSide() {
   };
 }
 
-function buildSearchTerms(query, side) {
-  const paired = side === 'source' ? localZhToEn(query) : localEnToZh(query);
-  const traditional = side === 'target' ? toTraditional(paired) : paired;
-  return uniqueSearchTerms([query, paired, traditional])
-    .sort((a, b) => b.length - a.length);
+function buildSearchTerms(query) {
+  return uniqueSearchTerms([query]).sort((a, b) => b.length - a.length);
 }
 
 function uniqueSearchTerms(terms) {
@@ -2789,60 +3611,94 @@ function normalizeFormula(text) {
     .trim();
 }
 
-function getCommentHighlights(comments, side, draft, sourceText = '', targetText = '') {
-  const quotes = [];
+function getCommentHighlights(comments, side, draft) {
+  const candidates = [];
 
   comments
     .filter((comment) => !comment.resolved)
     .forEach((comment) => {
-      quotes.push(...commentHighlightCandidates(comment, side, sourceText, targetText));
+      candidates.push(...commentHighlightCandidates(comment, side));
     });
 
-  if (draft?.quote) {
-    quotes.push(...draftHighlightCandidates(draft, side, sourceText, targetText));
+  if (draft?.quote && draft.side === side) {
+    candidates.push({ text: draft.quote, priority: 30 });
   }
 
-  return [...new Set(quotes.map((quote) => normalizeHighlightQuote(quote)).filter((quote) => quote.length >= 2))]
-    .sort((a, b) => b.length - a.length);
+  const unique = new Map();
+  candidates.forEach((candidate) => {
+    const text = normalizeHighlightQuote(candidate.text);
+    if (text.length < 2) return;
+    const key = text.toLowerCase();
+    const current = unique.get(key);
+    if (!current || candidate.priority > current.priority) unique.set(key, { ...candidate, text });
+  });
+
+  return [...unique.values()]
+    .sort((a, b) => b.priority - a.priority || b.text.length - a.text.length)
+    .map((candidate) => candidate.text);
 }
 
-function commentHighlightCandidates(comment, side, sourceText, targetText) {
-  const active = comment[side] ?? legacyCommentSide(comment, side);
-  const otherSide = side === 'source' ? 'target' : 'source';
-  const other = comment[otherSide] ?? legacyCommentSide(comment, otherSide);
-  return [
-    active.quote,
-    makePairedCommentText(other.quote, otherSide, 'quote'),
-    ...alignedCommentBlockCandidates(other.quote, side, sourceText, targetText),
-  ];
+function commentHighlightCandidates(comment, side) {
+  const active = comment[side];
+  return active?.quote ? [{ text: active.quote, priority: 30 }] : [];
 }
 
-function draftHighlightCandidates(draft, side, sourceText, targetText) {
-  if (draft.side === side) return [draft.quote];
-  return [
-    makePairedCommentText(draft.quote, draft.side, 'quote'),
-    ...alignedCommentBlockCandidates(draft.quote, side, sourceText, targetText),
-  ];
+function pairedQuoteCandidates(quote, side) {
+  const converted = makePairedCommentText(quote, side, 'quote');
+  return [{ text: converted, priority: 25 }];
 }
 
-function alignedCommentBlockCandidates(otherQuote, side, sourceText, targetText) {
+function alignedCommentSpanCandidates(otherQuote, side, sourceText, targetText) {
   const otherText = side === 'source' ? targetText : sourceText;
   const activeBlocks = renderBlocks(side === 'source' ? sourceText : targetText);
   const otherBlocks = renderBlocks(otherText);
   const candidates = [];
 
-  const otherIndex = blockIndexContainingQuote(otherBlocks, otherQuote);
-  if (otherIndex !== -1 && activeBlocks[otherIndex]?.text) {
-    candidates.push(activeBlocks[otherIndex].text);
+  const match = blockMatchContainingQuote(otherBlocks, otherQuote);
+  if (match && activeBlocks[match.index]?.text) {
+    const span = proportionalTextSpan(
+      activeBlocks[match.index].text,
+      match.start / Math.max(1, match.blockText.length),
+      match.end / Math.max(1, match.blockText.length)
+    );
+    if (span) candidates.push({ text: span, priority: 15 });
   }
 
   return candidates;
 }
 
-function blockIndexContainingQuote(blocks, quote) {
+function blockMatchContainingQuote(blocks, quote) {
   const normalizedQuote = normalizeHighlightQuote(quote).toLowerCase();
-  if (normalizedQuote.length < 2) return -1;
-  return blocks.findIndex((block) => normalizeHighlightQuote(block.text).toLowerCase().includes(normalizedQuote));
+  if (normalizedQuote.length < 2) return null;
+  for (let index = 0; index < blocks.length; index += 1) {
+    const blockText = normalizeHighlightQuote(blocks[index].text);
+    const lowerBlock = blockText.toLowerCase();
+    const start = lowerBlock.indexOf(normalizedQuote);
+    if (start !== -1) {
+      return { index, start, end: start + normalizedQuote.length, blockText };
+    }
+  }
+  return null;
+}
+
+function proportionalTextSpan(text, startRatio, endRatio) {
+  const value = normalizeHighlightQuote(text);
+  if (value.length < 2) return '';
+  let start = Math.max(0, Math.floor(value.length * startRatio));
+  let end = Math.min(value.length, Math.ceil(value.length * endRatio));
+  if (end <= start) end = Math.min(value.length, start + 1);
+
+  while (start > 0 && isWordChar(value[start - 1]) && isWordChar(value[start])) start -= 1;
+  while (end < value.length && isWordChar(value[end - 1]) && isWordChar(value[end])) end += 1;
+
+  const span = value.slice(start, end).replace(/^[\s,.;:!?，。；：！？、]+|[\s,.;:!?，。；：！？、]+$/g, '');
+  if (span.length < 2) return '';
+  if (span.length > value.length * 0.65) return '';
+  return span;
+}
+
+function isWordChar(char) {
+  return /[A-Za-z0-9_\-]/.test(char ?? '');
 }
 
 function normalizeHighlightQuote(value) {
@@ -2877,13 +3733,6 @@ function renderInline(text, highlights = []) {
 
 function renderHighlightedText(text, highlights) {
   if (!highlights.length || !text) return text;
-  const trimmedText = text.trim();
-  if (trimmedText.length >= 6) {
-    const containingQuote = highlights.find((highlight) => highlight.text.toLowerCase().includes(trimmedText.toLowerCase()));
-    if (containingQuote && containingQuote.text.length > trimmedText.length) {
-      return <mark className={containingQuote.className}>{text}</mark>;
-    }
-  }
 
   const parts = [];
   const lowerText = text.toLowerCase();
@@ -2921,6 +3770,7 @@ function renderHighlightedText(text, highlights) {
 }
 
 function CommentsPanel({ comments, activeSide, draft, onDraftChange, onDraftSave, onDraftCancel, onToggle, onRemove }) {
+  const sideComments = comments.filter((comment) => comment[activeSide]?.quote || comment[activeSide]?.text);
   return (
     <aside className="comments-panel">
       <div className="comments-header">
@@ -2939,15 +3789,15 @@ function CommentsPanel({ comments, activeSide, draft, onDraftChange, onDraftSave
             onCancel={onDraftCancel}
           />
         )}
-        {comments.length === 0 && !draft && (
+        {sideComments.length === 0 && !draft && (
           <div className="empty-comments">
             <Highlighter size={22} />
             <strong>暂无批注</strong>
-            <span>选中文本或切换到对应文档后添加审阅意见。</span>
+            <span>选中文本后添加修改建议，DeepSeek 同步时会参考。</span>
           </div>
         )}
-        {comments.map((comment) => {
-          const display = comment[activeSide] ?? legacyCommentSide(comment, activeSide);
+        {sideComments.map((comment) => {
+          const display = comment[activeSide];
           return (
           <article key={comment.id} className={classNames('comment-item', comment.resolved && 'resolved')}>
             <div className="comment-top">
@@ -2973,9 +3823,7 @@ function CommentsPanel({ comments, activeSide, draft, onDraftChange, onDraftSave
 
 function CommentDraft({ draft, activeSide, onChange, onSave, onCancel }) {
   const inputRef = useRef(null);
-  const quote = draft.side === activeSide
-    ? draft.quote
-    : makePairedCommentText(draft.quote, draft.side, 'quote');
+  const quote = draft.quote;
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -3008,19 +3856,49 @@ function CommentDraft({ draft, activeSide, onChange, onSave, onCancel }) {
 function legacyCommentSide(comment, activeSide) {
   const text = comment.text ?? '';
   const quote = comment.quote ?? '';
-  if (activeSide === 'source') {
-    return {
-      text: comment.side === 'target' ? localZhToEn(text) : text,
-      quote: comment.side === 'target' ? localZhToEn(quote) : quote,
-    };
-  }
   return {
-    text: comment.side === 'source' ? localEnToZh(text) : text,
-    quote: comment.side === 'source' ? localEnToZh(quote) : quote,
+    text,
+    quote,
   };
+}
+
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error) {
+    console.error('Bilingual editor render failed', error);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <main className="app-error">
+        <section>
+          <strong>页面加载失败</strong>
+          <p>当前编辑状态出现异常。可以刷新页面；如果仍然失败，重置文档不会清除你的翻译 API Key。</p>
+          <div className="app-error-actions">
+            <button onClick={() => window.location.reload()}>刷新</button>
+            <button onClick={() => { window.location.href = `${window.location.pathname}?reset=1`; }}>重置文档</button>
+          </div>
+          <code>{String(this.state.error?.message ?? this.state.error)}</code>
+        </section>
+      </main>
+    );
+  }
 }
 
 const rootElement = document.getElementById('root');
 const appRoot = rootElement.__bilingualEditorRoot ?? createRoot(rootElement);
 rootElement.__bilingualEditorRoot = appRoot;
-appRoot.render(<App />);
+appRoot.render(
+  <AppErrorBoundary>
+    <App />
+  </AppErrorBoundary>
+);
