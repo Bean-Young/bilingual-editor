@@ -308,6 +308,21 @@ assert.match(
   'GitHub Pages should point translation requests at the Vercel proxy'
 );
 assert.match(
+  mainSource,
+  /const CLOUD_FEATURES_ENABLED = false;/,
+  'public editor builds should not require the login or cloud collaboration flow'
+);
+assert.doesNotMatch(
+  mainSource,
+  /配置 Supabase 后启用注册、登录和协作/,
+  'public editor sidebar should not show Supabase/login setup copy'
+);
+assert.match(
+  mainSource,
+  /const DEFAULT_TRANSLATION_PROVIDER = [\s\S]*: 'nvidia';/,
+  'public editor should default to the free-trial Kimi/NVIDIA provider unless explicitly overridden'
+);
+assert.match(
   viteConfigSource,
   /base:\s*process\.env\.VITE_BASE_PATH\s*\|\|\s*'\.\/'/,
   'Vite should allow GitHub Pages to build under /bilingual-editor/'

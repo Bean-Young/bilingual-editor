@@ -22,7 +22,7 @@ Public links:
 - User-configured translation provider API keys
 - Local browser storage for settings and current documents
 
-There is no required login flow in the public demo.
+There is no required login flow in the public demo. The demo defaults to the NVIDIA / Kimi provider so test users can paste a free-trial Kimi-compatible key; DeepSeek and custom OpenAI-compatible providers remain available in Settings.
 
 ## Translation API
 

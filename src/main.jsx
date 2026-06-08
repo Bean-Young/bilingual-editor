@@ -5,7 +5,6 @@ import {
   ArrowRightLeft,
   Check,
   ChevronDown,
-  Cloud,
   Download,
   FileText,
   GripVertical,
@@ -43,6 +42,9 @@ This editor shows the whole source document and the whole Chinese version side b
 const ENABLE_IDLE_LLM_REFINEMENT = true;
 const LLM_BACKOFF_MS = 30_000;
 const CLOUD_FEATURES_ENABLED = false;
+const DEFAULT_TRANSLATION_PROVIDER = ['nvidia', 'deepseek', 'custom'].includes(import.meta.env.VITE_DEFAULT_TRANSLATION_PROVIDER)
+  ? import.meta.env.VITE_DEFAULT_TRANSLATION_PROVIDER
+  : 'nvidia';
 const LANGUAGES = [
   { code: 'auto', label: '智能识别', short: '自动' },
   { code: 'zh-CN', label: '中文简体', short: '中' },
@@ -60,7 +62,7 @@ const DEFAULT_SETTINGS = {
   autoDetect: true,
   sourceLang: 'auto',
   targetLang: 'auto',
-  translationProvider: 'deepseek',
+  translationProvider: DEFAULT_TRANSLATION_PROVIDER,
   translationApiKey: '',
   translationBaseUrl: '',
   translationModel: '',
@@ -2533,30 +2535,19 @@ function App() {
           </button>
         </div>
 
-        <div className="cloud-box">
-          {cloudEnabled ? (
-            <>
-              <div className="cloud-user">
-                <UserRound size={16} />
-                <div>
-                  <strong>{userDisplayName}</strong>
-                  <span>{currentUser.email}</span>
-                  <em>{profileStatus || cloudStatus}</em>
-                </div>
+        {cloudEnabled && (
+          <div className="cloud-box">
+            <div className="cloud-user">
+              <UserRound size={16} />
+              <div>
+                <strong>{userDisplayName}</strong>
+                <span>{currentUser.email}</span>
+                <em>{profileStatus || cloudStatus}</em>
               </div>
-              <button className="secondary-action" onClick={signOut}>退出登录</button>
-            </>
-          ) : (
-            <>
-              <div className="cloud-user">
-                <Cloud size={16} />
-                <div>
-                  <strong>本地模式</strong>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
+            </div>
+            <button className="secondary-action" onClick={signOut}>退出登录</button>
+          </div>
+        )}
 
         <button className="primary-action" onClick={() => fileRef.current?.click()}>
           <Upload size={18} />
