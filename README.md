@@ -76,6 +76,8 @@ release/Bilingual-Editor-macOS.dmg
 
 The macOS app bundles the static editor UI and calls the hosted Vercel translation proxy. Users still enter their own model API key in Settings. The generated app is ad-hoc signed for local use, not notarized for public distribution.
 
+The desktop wrapper serves the bundled static files through a private `127.0.0.1` server inside the app before loading them in WebKit. This avoids WebKit `file://` module-loading restrictions that can otherwise show a blank window.
+
 To build the GitHub Pages introduction site:
 
 ```bash

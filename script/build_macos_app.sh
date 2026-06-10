@@ -61,6 +61,11 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
   <string>13.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>
@@ -74,14 +79,20 @@ echo "==> Creating zip"
 ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
 
 echo "==> Creating dmg"
-hdiutil create \
-  -volname "$APP_NAME" \
-  -srcfolder "$APP_BUNDLE" \
-  -ov \
-  -format UDZO \
-  "$DMG_PATH"
+if hdiutil create \
+    -volname "$APP_NAME" \
+    -srcfolder "$APP_BUNDLE" \
+    -ov \
+    -format UDZO \
+    "$DMG_PATH"; then
+  echo "$DMG_PATH"
+else
+  echo "Warning: could not create DMG. The zip artifact is still ready: $ZIP_PATH" >&2
+fi
 
 echo "==> Done"
 echo "$APP_BUNDLE"
 echo "$ZIP_PATH"
-echo "$DMG_PATH"
+if [[ -f "$DMG_PATH" ]]; then
+  echo "$DMG_PATH"
+fi
