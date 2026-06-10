@@ -16,6 +16,14 @@ const languageNames = {
   ar: 'Arabic',
 };
 
+function setCorsHeaders(req, res) {
+  const origin = req.headers?.origin;
+  res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Vary', 'Origin');
+}
+
 const TRANSLATION_SKILL_PROMPT = [
   'You are a bilingual document translation engine for an Overleaf-like editor.',
   'Translate directly and faithfully. Do not summarize, expand, explain, or add commentary.',
@@ -296,8 +304,15 @@ function describeTranslationShape(parsed) {
 }
 
 export default async function handler(req, res) {
+  setCorsHeaders(req, res);
+
+  if (req.method === 'OPTIONS') {
+    res.status(204).json({});
+    return;
+  }
+
   if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
+    res.setHeader('Allow', 'POST, OPTIONS');
     res.status(405).json({ error: 'method not allowed' });
     return;
   }

@@ -293,6 +293,11 @@ assert.ok(
   'translate API should rely on model output instead of local substitutes'
 );
 assert.match(
+  translateApiSource,
+  /Access-Control-Allow-Origin/,
+  'translation API should allow the bundled macOS file-origin app to call the proxy'
+);
+assert.match(
   mainSource,
   /function translateApiUrl\(\)/,
   'frontend should choose a translation API endpoint instead of hardcoding /api/translate'
@@ -301,6 +306,11 @@ assert.match(
   mainSource,
   /hostname\.endsWith\('github\.io'\)/,
   'GitHub Pages builds should use the hosted translation proxy'
+);
+assert.match(
+  mainSource,
+  /window\.location\.protocol === 'file:'[\s\S]*DEFAULT_TRANSLATE_API_URL/,
+  'bundled macOS static app should use the hosted translation proxy'
 );
 assert.match(
   mainSource,

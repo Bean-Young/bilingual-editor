@@ -58,6 +58,24 @@ npm run build
 
 The production build is written to `dist/`.
 
+## macOS App
+
+Build a local downloadable macOS app bundle and DMG:
+
+```bash
+npm run build:mac
+```
+
+The script writes these local artifacts:
+
+```text
+release/Bilingual Editor.app
+release/Bilingual-Editor-macOS.zip
+release/Bilingual-Editor-macOS.dmg
+```
+
+The macOS app bundles the static editor UI and calls the hosted Vercel translation proxy. Users still enter their own model API key in Settings. The generated app is ad-hoc signed for local use, not notarized for public distribution.
+
 To build the GitHub Pages introduction site:
 
 ```bash

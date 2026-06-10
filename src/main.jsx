@@ -176,7 +176,10 @@ function resolveInputLanguage(text, configuredLanguage) {
 function translateApiUrl() {
   const configuredUrl = import.meta.env.VITE_TRANSLATE_API_URL?.trim();
   if (configuredUrl) return configuredUrl;
-  if (typeof window !== 'undefined' && window.location.hostname.endsWith('github.io')) {
+  if (
+    typeof window !== 'undefined'
+    && (window.location.protocol === 'file:' || window.location.hostname.endsWith('github.io'))
+  ) {
     return DEFAULT_TRANSLATE_API_URL;
   }
   return '/api/translate';
