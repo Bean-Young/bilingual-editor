@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ASSET_DIR="$ROOT_DIR/macos/Assets"
+PNG_PATH="$ASSET_DIR/AppIcon.png"
 SVG_PATH="$ASSET_DIR/AppIcon.svg"
 ICONSET_DIR="$ASSET_DIR/AppIcon.iconset"
 ICNS_PATH="$ASSET_DIR/AppIcon.icns"
@@ -17,11 +18,24 @@ mkdir -p "$ASSET_DIR"
 rm -rf "$ICONSET_DIR" "$ICNS_PATH"
 mkdir -p "$ICONSET_DIR"
 
-qlmanage -t -s 1024 -o "$TMP_DIR" "$SVG_PATH" >/dev/null
-BASE_PNG="$TMP_DIR/$(basename "$SVG_PATH").png"
+if [[ -f "$PNG_PATH" ]]; then
+  EMBEDDED_SVG="$TMP_DIR/AppIconSource.svg"
+  {
+    printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">'
+    printf '%s' '<image href="data:image/png;base64,'
+    base64 -i "$PNG_PATH"
+    printf '%s\n' '" x="0" y="0" width="1024" height="1024"/>'
+    printf '%s\n' '</svg>'
+  } > "$EMBEDDED_SVG"
+  qlmanage -t -s 1024 -o "$TMP_DIR" "$EMBEDDED_SVG" >/dev/null
+  BASE_PNG="$TMP_DIR/$(basename "$EMBEDDED_SVG").png"
+else
+  qlmanage -t -s 1024 -o "$TMP_DIR" "$SVG_PATH" >/dev/null
+  BASE_PNG="$TMP_DIR/$(basename "$SVG_PATH").png"
+fi
 
 if [[ ! -f "$BASE_PNG" ]]; then
-  echo "Failed to render $SVG_PATH" >&2
+  echo "Failed to render app icon source" >&2
   exit 1
 fi
 

@@ -44,7 +44,9 @@
   [self.window makeKeyAndOrderFront:nil];
 
   if ([self startLocalWebServer]) {
-    [self loadEditor];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self loadEditor];
+    });
   }
   [NSApp activateIgnoringOtherApps:YES];
 }
@@ -63,6 +65,7 @@
 - (void)loadEditor {
   NSString *urlString = [NSString stringWithFormat:@"http://127.0.0.1:%hu/index.html", self.serverPort];
   NSURL *indexURL = [NSURL URLWithString:urlString];
+  NSLog(@"Bilingual Editor loading %@", urlString);
   [self.webView loadRequest:[NSURLRequest requestWithURL:indexURL]];
 }
 
@@ -112,6 +115,7 @@
 
   self.serverSocket = socketFD;
   self.serverPort = ntohs(address.sin_port);
+  NSLog(@"Bilingual Editor serving %@ at http://127.0.0.1:%hu/index.html", self.webRoot.path, self.serverPort);
 
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     [self acceptLocalConnections];
@@ -181,6 +185,7 @@
 
     NSData *data = [NSData dataWithContentsOfFile:filePath];
     if (!data) {
+      NSLog(@"Bilingual Editor local server missing file: %@", filePath);
       [self sendStatus:404 body:@"Not Found" toClient:client];
       close(client);
       return;
@@ -244,6 +249,30 @@
   alert.informativeText = message;
   alert.alertStyle = NSAlertStyleCritical;
   [alert runModal];
+}
+
+- (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+  [self showWebError:error];
+}
+
+- (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+  [self showWebError:error];
+}
+
+- (void)showWebError:(NSError *)error {
+  NSLog(@"Bilingual Editor web view failed: %@", error);
+  NSString *escapedMessage = [[error localizedDescription] stringByReplacingOccurrencesOfString:@"&" withString:@"&amp;"];
+  escapedMessage = [escapedMessage stringByReplacingOccurrencesOfString:@"<" withString:@"&lt;"];
+  escapedMessage = [escapedMessage stringByReplacingOccurrencesOfString:@">" withString:@"&gt;"];
+  NSString *html = [NSString stringWithFormat:
+    @"<!doctype html><meta charset=\"utf-8\"><style>"
+    "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f7fb;color:#172033;margin:0;display:grid;place-items:center;height:100vh}"
+    ".card{max-width:560px;background:white;border:1px solid #d9e1ee;border-radius:14px;padding:24px;box-shadow:0 16px 45px rgba(20,45,85,.12)}"
+    "h1{font-size:20px;margin:0 0 10px}p{line-height:1.55;color:#526071}"
+    "</style><div class=\"card\"><h1>Bilingual Editor could not load</h1><p>%@</p></div>",
+    escapedMessage ?: @"Unknown loading error."
+  ];
+  [self.webView loadHTMLString:html baseURL:nil];
 }
 
 @end
