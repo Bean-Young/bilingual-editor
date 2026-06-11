@@ -11,6 +11,7 @@ DMG_PATH="$RELEASE_DIR/Bilingual-Editor-macOS.dmg"
 ZIP_PATH="$RELEASE_DIR/Bilingual-Editor-macOS.zip"
 BUILD_DIR="$ROOT_DIR/.build/macos"
 OBJECTIVE_C_SOURCE="$PACKAGE_DIR/Sources/BilingualEditor/main.m"
+ICON_FILE="$PACKAGE_DIR/Assets/AppIcon.icns"
 MACOS_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET:-13.0}"
 
 cd "$ROOT_DIR"
@@ -33,6 +34,9 @@ rm -rf "$APP_BUNDLE" "$DMG_PATH" "$ZIP_PATH"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources/Web"
 cp "$BUILD_DIR/$EXECUTABLE_NAME" "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 cp -R "$ROOT_DIR/dist/." "$APP_BUNDLE/Contents/Resources/Web/"
+if [[ -f "$ICON_FILE" ]]; then
+  cp "$ICON_FILE" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+fi
 
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -47,6 +51,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
   <string>$EXECUTABLE_NAME</string>
   <key>CFBundleIdentifier</key>
   <string>app.bilingual-editor.desktop</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>

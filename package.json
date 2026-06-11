@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:pages": "node scripts/build-pages.mjs",
     "build:mac": "./script/build_macos_app.sh",
+    "build:mac:icon": "./script/generate_macos_icon.sh",
     "preview": "vite preview --host 127.0.0.1",
     "test:regression": "node tests/regression-tests.mjs"
   },

@@ -66,6 +66,12 @@ Build a local downloadable macOS app bundle and DMG:
 npm run build:mac
 ```
 
+Regenerate the app icon after editing `macos/Assets/AppIcon.svg`:
+
+```bash
+npm run build:mac:icon
+```
+
 The script writes these local artifacts:
 
 ```text
