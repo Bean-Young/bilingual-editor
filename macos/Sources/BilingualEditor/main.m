@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate>
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
 @property(nonatomic, strong) NSURL *webRoot;
@@ -18,6 +18,7 @@
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
   [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+  [self installApplicationMenu];
 
   WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
   configuration.defaultWebpagePreferences.allowsContentJavaScript = YES;
@@ -26,6 +27,7 @@
 
   self.webView = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:configuration];
   self.webView.navigationDelegate = self;
+  self.webView.UIDelegate = self;
 
   NSRect frame = NSMakeRect(0, 0, 1320, 860);
   NSWindowStyleMask styleMask = NSWindowStyleMaskTitled |
@@ -49,6 +51,33 @@
     });
   }
   [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (void)installApplicationMenu {
+  NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@""];
+
+  NSMenuItem *appMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+  [mainMenu addItem:appMenuItem];
+  NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"Bilingual Editor"];
+  [appMenu addItemWithTitle:@"Quit Bilingual Editor" action:@selector(terminate:) keyEquivalent:@"q"];
+  appMenuItem.submenu = appMenu;
+
+  NSMenuItem *editMenuItem = [[NSMenuItem alloc] initWithTitle:@"Edit" action:nil keyEquivalent:@""];
+  [mainMenu addItem:editMenuItem];
+  NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+  [editMenu addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@"z"];
+  NSMenuItem *redoItem = [editMenu addItemWithTitle:@"Redo" action:@selector(redo:) keyEquivalent:@"Z"];
+  redoItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+  [editMenu addItem:[NSMenuItem separatorItem]];
+  [editMenu addItemWithTitle:@"Cut" action:@selector(cut:) keyEquivalent:@"x"];
+  [editMenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
+  [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
+  [editMenu addItemWithTitle:@"Delete" action:@selector(delete:) keyEquivalent:@""];
+  [editMenu addItem:[NSMenuItem separatorItem]];
+  [editMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
+  editMenuItem.submenu = editMenu;
+
+  NSApp.mainMenu = mainMenu;
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender {
@@ -257,6 +286,29 @@
 
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
   [self showWebError:error];
+}
+
+- (void)webView:(WKWebView *)webView
+runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters
+initiatedByFrame:(WKFrameInfo *)frame
+completionHandler:(void (^)(NSArray<NSURL *> * _Nullable URLs))completionHandler {
+  NSOpenPanel *panel = [NSOpenPanel openPanel];
+  panel.canChooseFiles = YES;
+  panel.canChooseDirectories = NO;
+  panel.allowsMultipleSelection = parameters.allowsMultipleSelection;
+  panel.resolvesAliases = YES;
+  panel.prompt = @"Upload";
+
+  NSWindow *sheetWindow = self.window ?: NSApp.keyWindow;
+  if (sheetWindow) {
+    [panel beginSheetModalForWindow:sheetWindow completionHandler:^(NSModalResponse result) {
+      completionHandler(result == NSModalResponseOK ? panel.URLs : nil);
+    }];
+    return;
+  }
+
+  NSModalResponse result = [panel runModal];
+  completionHandler(result == NSModalResponseOK ? panel.URLs : nil);
 }
 
 - (void)showWebError:(NSError *)error {

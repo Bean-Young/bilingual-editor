@@ -54,6 +54,7 @@ const TRANSLATION_SKILL_PROMPT = [
   'For HTML/XML: preserve tags, attributes, entities, and structural markup.',
   'For JSON/YAML/CSV/TSV/BibTeX/RST: preserve keys, delimiters, syntax, IDs, and machine-readable fields; translate only natural-language values.',
   'Return only valid JSON. For ordinary translation modes use exactly this shape: {"translations":["..."]}. For bilingual-sync use exactly this shape: {"sources":["..."],"translations":["..."]}.',
+  'The top-level JSON value must be an object, not a bare array. Do not use Chinese field names such as 译文 or 翻译结果.',
   'Do not wrap the JSON in Markdown code fences.',
   'Every returned array must have the same length and order as the input chunks.',
 ].join('\n');
@@ -76,7 +77,7 @@ function safeLanguageName(code) {
 
 function normalizeProviderConfig(body) {
   const provider = ['nvidia', 'deepseek', 'custom'].includes(body.provider) ? body.provider : 'nvidia';
-  const userApiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+  const userApiKey = normalizeApiKey(body.apiKey);
   const userBaseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
   const userModel = typeof body.model === 'string' ? body.model.trim() : '';
 
@@ -109,9 +110,21 @@ function normalizeProviderConfig(body) {
   };
 }
 
+export function normalizeApiKey(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/^Authorization:\s*/i, '')
+    .replace(/^Bearer\s+/i, '')
+    .replace(/^["']|["']$/g, '')
+    .replace(/\s+/g, '');
+}
+
 function validateProviderConfig(config) {
   if (!config.apiKey) {
     throw new Error(`missing ${config.label} API key`);
+  }
+  if (!/^[\x21-\x7E]+$/.test(config.apiKey)) {
+    throw new Error(`${config.label} API Key 格式不正确：请只粘贴 key 本身，不要包含中文说明、整段代码或其他非英文字符`);
   }
   if (!config.url || !/^https?:\/\//i.test(config.url)) {
     throw new Error(`invalid ${config.label} API URL`);
@@ -191,24 +204,58 @@ export function extractJson(content) {
 function translationTextFromItem(item) {
   if (typeof item === 'string') return item;
   if (item === null || item === undefined) return '';
+  if (Array.isArray(item)) {
+    if (item.length === 1) return translationTextFromItem(item[0]);
+    return null;
+  }
   if (typeof item !== 'object') return String(item);
 
-  const preferredKeys = ['translation', 'translated', 'target', 'text', 'output', 'content'];
+  const preferredKeys = [
+    'translation',
+    'translated',
+    'translatedText',
+    'translated_text',
+    'target',
+    'targetText',
+    'target_text',
+    'text',
+    'output',
+    'content',
+    '译文',
+    '翻译',
+    '翻译结果',
+    '结果',
+  ];
   for (const key of preferredKeys) {
     if (typeof item[key] === 'string') return item[key];
+    if (Array.isArray(item[key]) && item[key].length === 1) return translationTextFromItem(item[key][0]);
   }
+
+  const stringEntries = Object.entries(item).filter(([, value]) => typeof value === 'string');
+  const translationEntry = stringEntries.find(([key]) => /translat|target|output|result|译|翻译|结果/i.test(key));
+  if (translationEntry) return translationEntry[1];
+  if (stringEntries.length === 1) return stringEntries[0][1];
   return null;
 }
 
 function sourceTextFromItem(item) {
   if (typeof item === 'string') return item;
   if (item === null || item === undefined) return '';
+  if (Array.isArray(item)) {
+    if (item.length === 1) return sourceTextFromItem(item[0]);
+    return null;
+  }
   if (typeof item !== 'object') return String(item);
 
-  const preferredKeys = ['source', 'revisedSource', 'editedSource', 'sourceText', 'input', 'text', 'content'];
+  const preferredKeys = ['source', 'revisedSource', 'editedSource', 'sourceText', 'input', 'text', 'content', '原文', '源文', '修订原文'];
   for (const key of preferredKeys) {
     if (typeof item[key] === 'string') return item[key];
+    if (Array.isArray(item[key]) && item[key].length === 1) return sourceTextFromItem(item[key][0]);
   }
+  const stringEntries = Object.entries(item).filter(([, value]) => typeof value === 'string');
+  const sourceEntry = stringEntries.find(([key]) => /source|input|edited|原文|源文/i.test(key));
+  if (sourceEntry) return sourceEntry[1];
+  if (stringEntries.length === 1) return stringEntries[0][1];
   return null;
 }
 

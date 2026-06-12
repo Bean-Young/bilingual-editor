@@ -176,6 +176,9 @@ function resolveInputLanguage(text, configuredLanguage) {
 function translateApiUrl() {
   const configuredUrl = import.meta.env.VITE_TRANSLATE_API_URL?.trim();
   if (configuredUrl) return configuredUrl;
+  if (typeof window !== 'undefined' && window.location.hostname !== 'bilingual-editor.vercel.app') {
+    return DEFAULT_TRANSLATE_API_URL;
+  }
   if (
     typeof window !== 'undefined'
     && (window.location.protocol === 'file:' || window.location.hostname.endsWith('github.io'))
@@ -1198,11 +1201,20 @@ function saveLocalSettings(settings) {
   localStorage.setItem('bilingual-editor:settings', JSON.stringify(normalizeTranslationSettings(settings)));
 }
 
+function normalizeApiKeyInput(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/^Authorization:\s*/i, '')
+    .replace(/^Bearer\s+/i, '')
+    .replace(/^["']|["']$/g, '')
+    .replace(/\s+/g, '');
+}
+
 function translationServiceOptions(settings) {
   const normalized = normalizeTranslationSettings(settings);
   return {
     provider: normalized.translationProvider,
-    apiKey: normalized.translationApiKey.trim(),
+    apiKey: normalizeApiKeyInput(normalized.translationApiKey),
     baseUrl: normalized.translationBaseUrl.trim(),
     model: normalized.translationModel.trim(),
   };

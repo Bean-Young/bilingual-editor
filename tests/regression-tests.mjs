@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { extractJson, normalizeModelTranslations } from '../api/translate.js';
+import { extractJson, normalizeApiKey, normalizeModelTranslations } from '../api/translate.js';
 
 const mainSource = readFileSync(new URL('../src/main.jsx', import.meta.url), 'utf8');
 const translateApiSource = readFileSync(new URL('../api/translate.js', import.meta.url), 'utf8');
@@ -552,6 +552,16 @@ assert.deepEqual(
   'translation parser should accept direct object arrays from the model'
 );
 assert.deepEqual(
+  normalizeModelTranslations(extractJson('[{"译文":"甲"}]'), 1),
+  ['甲'],
+  'translation parser should accept one-item arrays with Chinese translation keys from DeepSeek'
+);
+assert.deepEqual(
+  normalizeModelTranslations(extractJson('[{"翻译结果":["甲"]}]'), 1),
+  ['甲'],
+  'translation parser should accept nested single-item translation arrays'
+);
+assert.deepEqual(
   normalizeModelTranslations(extractJson('{"0":"甲","1":"乙"}'), 2),
   ['甲', '乙'],
   'translation parser should accept numeric-key translation objects'
@@ -560,6 +570,21 @@ assert.deepEqual(
   normalizeModelTranslations(extractJson('{"translations":"甲"}'), 1),
   ['甲'],
   'translation parser should accept single-string translation responses for single-chunk retries'
+);
+assert.equal(
+  normalizeApiKey('Bearer sk-test-key\n'),
+  'sk-test-key',
+  'API key normalization should accept keys copied with a Bearer prefix'
+);
+assert.equal(
+  normalizeApiKey('Authorization: Bearer sk-test-key'),
+  'sk-test-key',
+  'API key normalization should accept keys copied from an Authorization header'
+);
+assert.equal(
+  /^[\x21-\x7E]+$/.test(normalizeApiKey('传了api')),
+  false,
+  'API key validation should catch non-ASCII text before it reaches the Authorization header'
 );
 assert.equal(
   shouldRetryLlmRateLimit(Object.assign(new Error('NVIDIA 429 Too Many Requests'), { status: 429 }), { mode: 'import' }),
