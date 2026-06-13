@@ -597,5 +597,25 @@ assert.equal(
   'idle refinement should not keep retrying through rate limits'
 );
 assert.equal(llmRateLimitDelayMs(0), 15_000, 'first rate-limit retry should back off instead of immediately hammering the API');
+assert.match(
+  mainSource,
+  /const IMPORT_TRANSLATION_TARGET_REQUESTS = 10;/,
+  'initial document translation should target about ten import batches instead of one request per paragraph'
+);
+assert.match(
+  mainSource,
+  /function buildLlmTranslationBatches/,
+  'initial document translation should use an explicit batching helper'
+);
+assert.doesNotMatch(
+  mainSource,
+  /maxBatchSize = mode === 'import' \? 1/,
+  'initial document translation should not force import batches to one paragraph each'
+);
+assert.doesNotMatch(
+  mainSource,
+  /waitForLlmRetry\(2000\)/,
+  'initial document translation should not add a fixed two-second delay after every imported paragraph'
+);
 
 console.log('regression tests passed');

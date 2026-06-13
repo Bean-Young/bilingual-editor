@@ -41,6 +41,11 @@ This editor shows the whole source document and the whole Chinese version side b
 
 const ENABLE_IDLE_LLM_REFINEMENT = true;
 const LLM_BACKOFF_MS = 30_000;
+const IMPORT_TRANSLATION_TARGET_REQUESTS = 10;
+const IMPORT_TRANSLATION_MAX_BATCH_CHARS = 11_000;
+const IMPORT_TRANSLATION_MAX_BATCH_ITEMS = 12;
+const EDIT_TRANSLATION_MAX_BATCH_CHARS = 7_000;
+const EDIT_TRANSLATION_MAX_BATCH_ITEMS = 6;
 const CLOUD_FEATURES_ENABLED = false;
 const DEFAULT_TRANSLATION_PROVIDER = ['nvidia', 'deepseek', 'custom'].includes(import.meta.env.VITE_DEFAULT_TRANSLATION_PROVIDER)
   ? import.meta.env.VITE_DEFAULT_TRANSLATION_PROVIDER
@@ -322,6 +327,43 @@ function waitForLlmRetry(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function buildLlmTranslationBatches(items, mode = 'import') {
+  const queue = Array.isArray(items) ? items : [];
+  if (!queue.length) return [];
+
+  const maxBatchChars = mode === 'import' ? IMPORT_TRANSLATION_MAX_BATCH_CHARS : EDIT_TRANSLATION_MAX_BATCH_CHARS;
+  const targetItemsPerBatch = mode === 'import'
+    ? Math.ceil(queue.length / IMPORT_TRANSLATION_TARGET_REQUESTS)
+    : EDIT_TRANSLATION_MAX_BATCH_ITEMS;
+  const maxBatchItems = mode === 'import'
+    ? Math.min(IMPORT_TRANSLATION_MAX_BATCH_ITEMS, Math.max(1, targetItemsPerBatch))
+    : EDIT_TRANSLATION_MAX_BATCH_ITEMS;
+  const batches = [];
+  let cursor = 0;
+
+  while (cursor < queue.length) {
+    const batch = [];
+    let batchChars = 0;
+
+    while (cursor < queue.length && batch.length < maxBatchItems) {
+      const item = queue[cursor];
+      const itemLength = item.text.length;
+      if (batch.length && batchChars + itemLength > maxBatchChars) break;
+      batch.push(item);
+      batchChars += itemLength;
+      cursor += 1;
+    }
+
+    if (!batch.length) {
+      batch.push(queue[cursor]);
+      cursor += 1;
+    }
+    batches.push(batch);
+  }
+
+  return batches;
+}
+
 async function translateDocumentWithLlm(text, side, settings, format, mode = 'import', onProgress = null) {
   const direction = resolveSideDirection(text, side, settings);
   if (sameLanguageGroup(direction.sourceLang, direction.targetLang)) return null;
@@ -338,22 +380,10 @@ async function translateDocumentWithLlm(text, side, settings, format, mode = 'im
     })))
     .filter((block) => block.text.trim() && !isProtectedMathBlock(block.text));
   const translatedParts = new Map();
+  const batches = buildLlmTranslationBatches(queue, mode);
   let completed = 0;
 
-  let cursor = 0;
-  while (cursor < queue.length) {
-    const batch = [];
-    let batchChars = 0;
-    const maxBatchSize = mode === 'import' ? 1 : 6;
-    const maxBatchChars = mode === 'import' ? 2200 : 7000;
-    while (cursor < queue.length && batch.length < maxBatchSize) {
-      const item = queue[cursor];
-      if (batch.length && batchChars + item.text.length > maxBatchChars) break;
-      batch.push(item);
-      batchChars += item.text.length;
-      cursor += 1;
-    }
-
+  for (const batch of batches) {
     const protectedBatch = batch.map((item) => maskInlineProtectedSyntax(item.text));
     const translations = await requestLlmTranslationsWithRetry(
       protectedBatch.map((item) => item.text),
@@ -363,7 +393,7 @@ async function translateDocumentWithLlm(text, side, settings, format, mode = 'im
         mode,
         ...translationServiceOptions(settings),
         onRateLimit: (attempt, waitMs) => {
-          onProgress?.(completed, queue.length, `翻译服务限速，等待 ${Math.ceil(waitMs / 1000)} 秒后重试当前段（第 ${attempt} 次）`);
+          onProgress?.(completed, batches.length, `翻译服务限速，等待 ${Math.ceil(waitMs / 1000)} 秒后重试当前批次（第 ${attempt} 次）`);
         },
       }
     );
@@ -379,11 +409,8 @@ async function translateDocumentWithLlm(text, side, settings, format, mode = 'im
       parts[item.partIndex] = `${translated}${item.separator}`;
       translatedParts.set(key, parts);
     });
-    completed += batch.length;
-    onProgress?.(completed, queue.length);
-    if (mode === 'import' && cursor < queue.length) {
-      await waitForLlmRetry(2000);
-    }
+    completed += 1;
+    onProgress?.(completed, batches.length);
   }
 
   translatedParts.forEach((parts, index) => {
